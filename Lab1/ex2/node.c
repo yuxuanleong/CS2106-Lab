@@ -22,7 +22,7 @@
  * 3. create a empty list
  */
 
-node *get_node_pt (list *lst, int index) {
+node *get_node_pt(list *lst, int index) {
     
     int curr_index = 0;
     node *curr_node_pt = lst->head;
@@ -118,6 +118,12 @@ void delete_node_at(list *lst, int index) {
         return;
     }
 
+    if (lst->head == lst->head->next) {
+        free(lst->head);
+        lst->head = NULL;
+        return;
+    }
+
     if (!index) {
         node* front = lst->head;
         node* temp = lst->head;
@@ -127,6 +133,7 @@ void delete_node_at(list *lst, int index) {
         lst->head = lst->head->next;
         temp->next = lst->head;
         free(front);
+        return;
     } else {
         int curr_index = 0;
         node* temp = lst->head;
@@ -137,6 +144,7 @@ void delete_node_at(list *lst, int index) {
         node* node_to_delete = temp->next;
         temp->next = temp->next->next;
         free(node_to_delete);
+        return;
     }
     
 }
@@ -178,11 +186,11 @@ void reverse_list(list *lst) {
 // Resets list to an empty state (no nodes) and frees
 // any allocated memory in the process
 void reset_list(list *lst) {
-    node* temp = lst->head;
-    while (temp != lst->head) {
-        node* prev = temp; 
-        node* temp = temp->next;
-        free(prev);
+    node* curr = lst->head;
+    while (curr != NULL) {
+        node* temp = curr; 
+        curr = temp->next;
+        free(temp);
     }
     lst->head = NULL;
 }
