@@ -26,7 +26,6 @@ int main() {
     list *lst = (list *)malloc(sizeof(list));
     lst->head = NULL;
 
-
     int instr;
     while (scanf("%d", &instr) == 1) {
         run_instruction(lst, instr);

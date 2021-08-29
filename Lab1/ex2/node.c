@@ -186,11 +186,25 @@ void reverse_list(list *lst) {
 // Resets list to an empty state (no nodes) and frees
 // any allocated memory in the process
 void reset_list(list *lst) {
-    node* curr = lst->head;
-    while (curr != NULL) {
-        node* temp = curr; 
-        curr = temp->next;
-        free(temp);
+
+    if (is_empty_list(lst)) {
+        lst->head = NULL;
+        return;
     }
+
+    if (lst->head == lst->head->next) {
+        free(lst->head);
+        lst->head = NULL;
+        return;
+    }
+
+    node* curr = lst->head;
+    while (curr->next != lst->head) {
+        node* prev = curr; 
+        curr = curr->next;
+        free(prev);
+    }
+    free(curr);
     lst->head = NULL;
+    return;
 }
