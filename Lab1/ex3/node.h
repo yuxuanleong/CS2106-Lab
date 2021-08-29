@@ -20,3 +20,4 @@ void reverse_list(list *lst);
 void reset_list(list *lst);
 void map(list *lst, int (*func)(int));
 long sum_list(list *list);
+void print_list(list *lst);
