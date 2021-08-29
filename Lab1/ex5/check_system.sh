@@ -8,13 +8,13 @@
 ####################
 
 # Fill the below up
-hostname=
-machine_hardware=
-max_user_process_count=
-user_process_count=
-user_with_most_processes=
-mem_free_percentage=
-swap_free_percentage=
+hostname=$(hostname)
+machine_hardware=$(uname --m)
+max_user_process_count=$(cat /proc/sys/kernel/pid_max)
+user_process_count=$(ps -e --no-headers| wc -l)
+user_with_most_processes=$(ps axho user --sort -rss | head -1)
+mem_free_percentage=$(free | grep Mem | awk '{print $4/$2 * 100.0}')
+swap_free_percentage=$(free | grep Swap | awk '{print $4/$2 * 100.0}')
 
 echo "Hostname: $hostname"
 echo "Machine Hardware: $machine_hardware"
