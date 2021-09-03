@@ -1,6 +1,6 @@
 /*************************************
 * Lab 1 Exercise 3
-* Name: Yang Shiyuan 
+* Name: Yang Shiyuan
 * Student No: A0214269A
 * Lab Group: B17
 *************************************/
