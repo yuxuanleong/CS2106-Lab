@@ -1,9 +1,9 @@
 #!/bin/bash
 ####################
 # Lab 1 Exercise 6
-# Name:
-# Student No:
-# Lab Group: 
+# Name: Yang Shiyuan
+# Student No: A0214269A
+# Lab Group: B17
 ####################
 echo "Printing system call report"
 # Compile file
