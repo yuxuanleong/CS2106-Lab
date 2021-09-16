@@ -7,12 +7,15 @@
 
 #define ERROR_FORK -1
 #define INCOMPLETE -1
+#define FORKING_ERROR -2
 #define _POSIX_SOURCE
 
 #include <sys/types.h>
 #include <sys/wait.h>
 #include "myshell.h"
 #include <stdio.h> 
+#include <unistd.h>
+#include <stdlib.h>
 #include <sys/stat.h>   // stat
 #include <stdbool.h>    // bool type
 
@@ -50,11 +53,12 @@ void ex1a_process(size_t num_tokens, char **tokens){
     child_PID_tracker[new_child_PID_Index][0] = fork();
     child_PID_tracker[new_child_PID_Index][1] = INCOMPLETE;
     if (child_PID_tracker[new_child_PID_Index][0] == 0) {
-        execvp(tokens[0], tokens);
-        exit(ERROR_FORK);
+        int exe = execv(tokens[0], tokens);
+        printf("This is the exit status %d in file %s\n", exe, tokens[0]);
+        exit(FORKING_ERROR);
     } else {
         int status;
-        wait(&status);
+        waitpid(child_PID_tracker[new_child_PID_Index][0], &status, 0);
         child_PID_tracker[new_child_PID_Index][1] = WEXITSTATUS(status);
     }
     new_child_PID_Index++;
@@ -65,15 +69,16 @@ void ex1b_process(size_t num_tokens, char **tokens){
     child_PID_tracker[new_child_PID_Index][1] = INCOMPLETE;
     if (child_PID_tracker[new_child_PID_Index][0] == 0) {
         tokens[num_tokens-2] = NULL;
-        execvp(tokens[0], tokens);
-        exit(ERROR_FORK);
+        int exe = execv(tokens[0], tokens);
+        printf("This is the exit status %d in file %s\n", exe, tokens[0]);
+        exit(FORKING_ERROR);
     } else {
-        printf("Child[%d] in background\n", *child_PID_tracker[new_child_PID_Index]);
+        printf("Child[%d] in background\n", child_PID_tracker[new_child_PID_Index][0]);
     }
     new_child_PID_Index++;
 }
 
-void show_info(size_t num_tokens, char **tokens) {
+void ex1c_show_info(size_t num_tokens, char **tokens) {
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (child_PID_tracker[i][0] != 0) {
             if (child_PID_tracker[i][1] == INCOMPLETE) {
@@ -97,7 +102,7 @@ void my_process_command(size_t num_tokens, char **tokens) {
     
     int command_type = check_command (num_tokens, tokens);
     if (command_type == 1) {
-        show_info(num_tokens, tokens);
+        ex1c_show_info(num_tokens, tokens);
     }else if (command_type == 2) {
         ex1a_process(num_tokens, tokens);
     } else if (command_type == 3){
