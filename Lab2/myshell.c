@@ -22,15 +22,37 @@
 int child_PID_tracker[MAX_PROCESSES][2];
 int new_child_PID_Index = 0;
 
+/**
+ * @brief 
+ * Contructor
+ */
 void my_init(void) {
     // Initialize what you need here   
 }
 
+/**
+ * @brief 
+ * A method that checks the existence of a file 
+ * @param filename 
+ * @return true 
+ * @return false 
+ */
 bool file_exists (char *filename) {
   struct stat buffer;   
   return (stat (filename, &buffer) == 0);
 }
 
+/**
+ * @brief 
+ * A method that checks the type of command input
+ * @param num_tokens 
+ * @param tokens 
+ * @return int 
+ * 0 -> Unrecognisable command
+ * 1 -> info
+ * 2 -> {program} (arg...)
+ * 3 -> {program} (arg...) &
+ */
 int check_command(size_t num_tokens, char** tokens) {
 
     if (num_tokens == 2) {
@@ -49,6 +71,12 @@ int check_command(size_t num_tokens, char** tokens) {
     }
 }
 
+/**
+ * @brief 
+ * Exercise 1a: {program} (args...)
+ * @param num_tokens 
+ * @param tokens 
+ */
 void ex1a_process(size_t num_tokens, char **tokens){
     child_PID_tracker[new_child_PID_Index][0] = fork();
     child_PID_tracker[new_child_PID_Index][1] = INCOMPLETE;
@@ -64,6 +92,12 @@ void ex1a_process(size_t num_tokens, char **tokens){
     new_child_PID_Index++;
 }
 
+/**
+ * @brief 
+ * Exercise 1b: {program} (args...) &
+ * @param num_tokens 
+ * @param tokens 
+ */
 void ex1b_process(size_t num_tokens, char **tokens){
     child_PID_tracker[new_child_PID_Index][0] = fork();
     child_PID_tracker[new_child_PID_Index][1] = INCOMPLETE;
@@ -78,6 +112,12 @@ void ex1b_process(size_t num_tokens, char **tokens){
     new_child_PID_Index++;
 }
 
+/**
+ * @brief 
+ * Exercise 1c: info
+ * @param num_tokens 
+ * @param tokens 
+ */
 void ex1c_show_info(size_t num_tokens, char **tokens) {
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (child_PID_tracker[i][0] != 0) {
@@ -97,6 +137,12 @@ void ex1c_show_info(size_t num_tokens, char **tokens) {
     }
 }
 
+/**
+ * @brief 
+ * A method that controls the execution of a process
+ * @param num_tokens 
+ * @param tokens 
+ */
 void my_process_command(size_t num_tokens, char **tokens) {
     // Your code here, refer to the lab document for a description of the arguments
     
@@ -113,6 +159,10 @@ void my_process_command(size_t num_tokens, char **tokens) {
     
 }
 
+/**
+ * @brief 
+ * Exercise 1d: Quit
+ */
 void my_quit(void) {
     // Clean up function, called after "quit" is entered as a user command
     printf("Goodbye!\n");
