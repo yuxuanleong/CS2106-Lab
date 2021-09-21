@@ -63,14 +63,23 @@ bool file_exists (char *filename) {
  * 3 -> {program} (arg...) &
  * 4 -> wait {PID}
  * 5 -> terminate {PID}
+ * 6 -> {program} &&
+ * 7 -> {program} (arg...) &&
  */
 int check_command(size_t num_tokens, char** tokens) {
-
     if (num_tokens == 2) {
         if (strcmp (tokens[0], "info") == 0) {
             return 1;
         }
+
+        if (file_exists(tokens[0])) {
+            return 2;
+        } else {
+            return 0;
+        }
+
     } else if (num_tokens > 2) {
+
         if (strcmp (tokens[0], "wait") == 0) {
             return 4;
         } else if (strcmp(tokens[0], "terminate") == 0) {
@@ -78,10 +87,24 @@ int check_command(size_t num_tokens, char** tokens) {
         }
 
         if (file_exists (tokens[0])) {
+
+            if (strcmp (tokens[1], "&&") == 0) {
+                return 6;
+            }
+
+            if (tokens[2] != NULL) {
+                if (strcmp (tokens[2], "&&") == 0) {
+                    return 7;
+                }
+            }
+
             if (strcmp (tokens[num_tokens-2], "&") == 0){
                 return 3;
-            }
+            } 
+
             return 2;
+        } else {
+            return 0;
         }
     } else {
         return 0;
@@ -211,6 +234,56 @@ int targetedPID = atoi(tokens[1]);
 }
 
 /**
+ * @brief
+ * Exercise 2c: chained process
+ * @param num_tokens
+ * @param tokens
+ */
+void ex2c_process(size_t num_tokens, char **tokens) {
+    int chaining_index = 0;
+    for (int i = 0; i < num_tokens; i++) {
+        int num_chaining_tokens;
+        if (i == num_tokens - 1) {
+            num_chaining_tokens = i - chaining_index + 1;
+            
+            int command_type = check_command (num_chaining_tokens, &tokens[chaining_index]);
+
+            my_process_command(num_chaining_tokens, &tokens[chaining_index]);
+
+            if (command_type == 0) {
+                return;
+            }
+
+            if (child_PID_tracker[new_child_PID_Index - 1][1] != 0) {
+                printf("%s failed\n", tokens[chaining_index]);
+                return;
+            }
+
+            chaining_index = i + 1;
+        }
+        else if (strcmp (tokens[i], "&&") == 0) {
+            tokens[i] = NULL;
+            num_chaining_tokens = i - chaining_index + 1;
+            int command_type = check_command (num_chaining_tokens, &tokens[chaining_index]);
+
+            my_process_command(num_chaining_tokens, &tokens[chaining_index]);
+
+            if (command_type == 0) {
+                return;
+            }
+
+            if (child_PID_tracker[new_child_PID_Index - 1][1] != 0) {
+                printf("%s failed\n", tokens[chaining_index]);
+                return;
+            }
+
+            chaining_index = i + 1;
+        }
+
+    }
+}
+
+/**
  * @brief 
  * A method that controls the execution of a process
  * @param num_tokens 
@@ -220,6 +293,7 @@ void my_process_command(size_t num_tokens, char **tokens) {
     // Your code here, refer to the lab document for a description of the arguments
     
     int command_type = check_command (num_tokens, tokens);
+
     if (command_type == 1) {
         ex1c_show_info(num_tokens, tokens);
     }else if (command_type == 2) {
@@ -230,6 +304,8 @@ void my_process_command(size_t num_tokens, char **tokens) {
         ex2a_wait_PID(num_tokens, tokens);
     } else if (command_type == 5) {
         ex2b_terminate_PID(num_tokens, tokens);
+    } else if (command_type == 6 || command_type == 7) {
+        ex2c_process(num_tokens, tokens);
     } else {
         printf("%s not found\n", tokens[0]);
     }
