@@ -20,6 +20,7 @@
 #include <sys/stat.h>   // stat
 #include <stdbool.h>    // bool type
 #include <sys/signal.h>
+#include <fcntl.h>
 
 /**
  * [0] -> Reserved for PID
@@ -59,12 +60,14 @@ bool file_exists (char *filename) {
  * @return int 
  * 0 -> Unrecognisable command
  * 1 -> info
- * 2 -> {program} (arg...)
+ * 2 -> {program} (arg...) + {program}
  * 3 -> {program} (arg...) &
  * 4 -> wait {PID}
  * 5 -> terminate {PID}
  * 6 -> {program} &&
  * 7 -> {program} (arg...) &&
+ * 8 -> {program} (</>/2> file)
+ * 9 -> {program} (arg...) (>/2> file)
  */
 int check_command(size_t num_tokens, char** tokens) {
     if (num_tokens == 2) {
@@ -92,9 +95,19 @@ int check_command(size_t num_tokens, char** tokens) {
                 return 6;
             }
 
+            if (strcmp(tokens[1], "<") == 0 || strcmp(tokens[1], ">") == 0 || strcmp(tokens[1], "2>") == 0) {
+                printf("Case 8\n");
+                return 8;
+            }
+
             if (tokens[2] != NULL) {
                 if (strcmp (tokens[2], "&&") == 0) {
                     return 7;
+                }
+
+                if (strcmp(tokens[2], ">") == 0 || strcmp(tokens[2], "2>") == 0) {
+                    printf("Case 9\n");
+                    return 9;
                 }
             }
 
@@ -303,6 +316,163 @@ void ex2c_process(size_t num_tokens, char **tokens) {
 
 /**
  * @brief 
+ * Exercise 3a: Modified ex1a: {program} (>/2> file)
+ * @param num_tokens 
+ * @param tokens 
+ */
+void ex3a_1_modified_ex1a_process_1(size_t num_tokens, char **tokens){
+    child_PID_tracker[new_child_PID_Index][0] = fork();
+    child_PID_tracker[new_child_PID_Index][1] = INCOMPLETE_FORK;
+
+    int fildes2 = strcmp(tokens[1],">") == 0 ? STDOUT_FILENO : STDERR_FILENO;
+
+    if (child_PID_tracker[new_child_PID_Index][0] == 0) {
+        int file = open(tokens[2], O_RDWR | O_CREAT | O_TRUNC, 0777);
+        if (file == -1) {
+            printf("FILE OPEN ERROR\n");
+        }
+        dup2(file, fildes2);
+        tokens[1] = NULL;
+        tokens[2] = NULL;
+        int exe = execv(tokens[0], tokens);
+        close(file);
+        printf("This is the exit status %d in file %s\n", exe, tokens[0]);
+        exit(ERROR_FORKING);
+    } else {
+        int status;
+        waitpid(child_PID_tracker[new_child_PID_Index][0], &status, 0);
+        child_PID_tracker[new_child_PID_Index][1] = WEXITSTATUS(status);
+    }
+    new_child_PID_Index++;
+}
+
+/**
+ * @brief 
+ * Exercise 3a: Modified ex1a: {program} (< file) (>/2> file)
+ * @param num_tokens 
+ * @param tokens 
+ */
+void ex3a_1_modified_ex1a_process_2(size_t num_tokens, char **tokens){
+    child_PID_tracker[new_child_PID_Index][0] = fork();
+    child_PID_tracker[new_child_PID_Index][1] = INCOMPLETE_FORK;
+
+    if (tokens[3] != NULL) {
+        int fildes2 = strcmp(tokens[3],">") == 0 ? STDOUT_FILENO : STDERR_FILENO;
+
+        if (child_PID_tracker[new_child_PID_Index][0] == 0) {
+            int file = open(tokens[4], O_RDWR | O_CREAT | O_TRUNC, 0777);
+            if (file == -1) {
+                printf("FILE OPEN ERROR\n");
+            }
+            dup2(file, fildes2);
+            tokens[1] = NULL;
+            tokens[2] = NULL;
+            int exe = execv(tokens[0], tokens);
+            close(file);
+            printf("This is the exit status %d in file %s\n", exe, tokens[0]);
+            exit(ERROR_FORKING);
+        } else {
+            int status;
+            waitpid(child_PID_tracker[new_child_PID_Index][0], &status, 0);
+            child_PID_tracker[new_child_PID_Index][1] = WEXITSTATUS(status);
+        }
+        new_child_PID_Index++;
+    } else {
+        if (child_PID_tracker[new_child_PID_Index][0] == 0) {
+            int readFile = open(tokens[2], O_RDWR | O_CREAT | O_TRUNC, 0777);
+            if (readFile == -1) {
+                printf("FILE OPEN ERROR\n");
+            }
+            dup2(readFile, STDIN_FILENO);
+            int exe = execv(tokens[0], tokens[2]);
+            close(readFile);
+            printf("This is the exit status %d in file %s\n", exe, tokens[0]);
+            exit(ERROR_FORKING);
+        } else {
+            int status;
+            waitpid(child_PID_tracker[new_child_PID_Index][0], &status, 0);
+            child_PID_tracker[new_child_PID_Index][1] = WEXITSTATUS(status);
+        }
+        new_child_PID_Index++;
+    }
+    
+}
+
+/**
+ * @brief 
+ * Exercise 3a: Modified ex1a: {program} (>/2> file)
+ * @param num_tokens 
+ * @param tokens 
+ */
+void ex3a_2_modified_ex1a_process_1(size_t num_tokens, char **tokens){
+    child_PID_tracker[new_child_PID_Index][0] = fork();
+    child_PID_tracker[new_child_PID_Index][1] = INCOMPLETE_FORK;
+
+    int fildes2 = strcmp(tokens[2],">") == 0 ? STDOUT_FILENO : STDERR_FILENO;
+
+    if (child_PID_tracker[new_child_PID_Index][0] == 0) {
+        int file = open(tokens[3], O_RDWR | O_CREAT | O_TRUNC, 0777);
+        if (file == -1) {
+            printf("FILE OPEN ERROR\n");
+        }
+        dup2(file, fildes2);
+        tokens[2] = NULL;
+        tokens[3] = NULL;
+        int exe = execv(tokens[0], tokens);
+        close(file);
+        printf("This is the exit status %d in file %s\n", exe, tokens[0]);
+        exit(ERROR_FORKING);
+    } else {
+        int status;
+        waitpid(child_PID_tracker[new_child_PID_Index][0], &status, 0);
+        child_PID_tracker[new_child_PID_Index][1] = WEXITSTATUS(status);
+    }
+    new_child_PID_Index++;
+}
+
+/**
+ * @brief
+ * Exercise 3a: {program} (</>/2> file)
+ * @param num_tokens
+ * @param tokens
+ */
+void ex3a_1_process(size_t num_tokens, char **tokens) {
+    if (strcmp(tokens[1], "<") == 0) {
+        printf("READING FILE: %s\n", tokens[2]);
+
+        ex3a_1_modified_ex1a_process_2 (num_tokens, tokens);
+
+        if (tokens[2] != NULL) {
+            if (strcmp(tokens[3], ">") == 0) {
+                printf("WRITING STD FILE: %s\n", tokens[4]);
+            } else if (strcmp(tokens[3], "2>") == 0) {
+                printf("WRITING ERR FILE: %s\n", tokens[4]);
+            }
+        }
+
+    } else if (strcmp(tokens[1], ">") == 0) {
+        ex3a_1_modified_ex1a_process_1(num_tokens, tokens);
+    } else if (strcmp(tokens[1], "2>") == 0) {
+        ex3a_1_modified_ex1a_process_1(num_tokens, tokens);
+    }
+}
+
+/** 
+ * @brief
+ * Exercise 3a: {program} (arg...) (>/2> file)
+ * @param num_tokens
+ * @param tokens
+ */
+void ex3a_2_process(size_t num_tokens, char **tokens) {
+        if (strcmp(tokens[2], ">") == 0) {
+            ex3a_2_modified_ex1a_process_1(num_tokens, tokens);
+        } else if (strcmp(tokens[2], "2>") == 0) {
+            ex3a_2_modified_ex1a_process_1(num_tokens, tokens);
+        }
+}
+
+/**
+ * @brief 
  * A method that controls the execution of a process
  * @param num_tokens 
  * @param tokens 
@@ -324,6 +494,10 @@ void my_process_command(size_t num_tokens, char **tokens) {
         ex2b_terminate_PID(num_tokens, tokens);
     } else if (command_type == 6 || command_type == 7) {
         ex2c_process(num_tokens, tokens);
+    } else if (command_type == 8) {
+        ex3a_1_process(num_tokens, tokens);
+    } else if (command_type == 9) {
+        ex3a_2_process(num_tokens, tokens);
     } else {
         printf("%s not found\n", tokens[0]);
     }
