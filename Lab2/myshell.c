@@ -359,7 +359,12 @@ void ex3a_1_modified_ex1a_process_1(size_t num_tokens, char **tokens){
  * @param num_tokens 
  * @param tokens 
  */
-void ex3a_1_modified_ex1a_process_2(size_t num_tokens, char **tokens){
+void ex3a_1_modified_ex1a_process_2(size_t num_tokens, char **tokens){\
+    if (!file_exists(tokens[2])) {
+        printf("%s does not exist\n", tokens[2]);
+        return;
+    }
+
     child_PID_tracker[new_child_PID_Index][0] = fork();
     child_PID_tracker[new_child_PID_Index][1] = INCOMPLETE_FORK;
     /*
@@ -369,25 +374,24 @@ void ex3a_1_modified_ex1a_process_2(size_t num_tokens, char **tokens){
     printf("Tokens[2] = %s\n", tokens[2]);
     */
 
-    if (!file_exists(tokens[2])) {
-        printf("%s does not exist\n", tokens[2]);
-        return;
-    }
-
     if (tokens[3] != NULL) {
         
         int fildes2 = strcmp(tokens[3],">") == 0 ? STDOUT_FILENO : STDERR_FILENO;
-
+        tokens[1] = tokens[2];
+        tokens[2] = NULL;
         if (child_PID_tracker[new_child_PID_Index][0] == 0) {
             int file = open(tokens[4], O_RDWR | O_CREAT | O_TRUNC, 0777);
-            if (file == -1) {
+            int readFile = open(tokens[1], O_RDONLY, 0777);
+            if (file == -1 || readFile == -1) {
                 printf("FILE OPEN ERROR\n");
             }
             dup2(file, fildes2);
-            tokens[1] = NULL;
-            tokens[2] = NULL;
-            int exe = execv(tokens[0], tokens);
+            dup2(readFile, STDIN_FILENO);
             close(file);
+            close(readFile);
+
+            int exe = execv(tokens[0], tokens);
+
             printf("This is the exit status %d in file %s\n", exe, tokens[0]);
             exit(ERROR_FORKING);
         } else {
