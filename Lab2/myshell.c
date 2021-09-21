@@ -255,7 +255,7 @@ void ex2a_wait_PID(size_t num_tokens, char **tokens) {
  * @param tokens
  */
 void ex2b_terminate_PID(size_t num_tokens, char **tokens) {
-int targetedPID = atoi(tokens[1]);
+    int targetedPID = atoi(tokens[1]);
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (child_PID_tracker[i][0] == targetedPID && child_PID_tracker[i][1] == INCOMPLETE_FORK) {
             int killResult = kill(targetedPID, SIGTERM);
@@ -359,7 +359,7 @@ void ex3a_1_modified_ex1a_process_1(size_t num_tokens, char **tokens){
  * @param num_tokens 
  * @param tokens 
  */
-void ex3a_1_modified_ex1a_process_2(size_t num_tokens, char **tokens){\
+void ex3a_1_modified_ex1a_process_2(size_t num_tokens, char **tokens){
     if (!file_exists(tokens[2])) {
         printf("%s does not exist\n", tokens[2]);
         return;
@@ -431,6 +431,108 @@ void ex3a_1_modified_ex1a_process_2(size_t num_tokens, char **tokens){\
 
 /**
  * @brief 
+ * Exercise 3a: Modified ex1a: {program} (>/2> file) &
+ * @param num_tokens 
+ * @param tokens 
+ */
+void ex3b_1_modified_ex1a_process_1(size_t num_tokens, char **tokens){
+    child_PID_tracker[new_child_PID_Index][0] = fork();
+    child_PID_tracker[new_child_PID_Index][1] = INCOMPLETE_FORK;
+
+    int fildes2 = strcmp(tokens[1],">") == 0 ? STDOUT_FILENO : STDERR_FILENO;
+
+    if (child_PID_tracker[new_child_PID_Index][0] == 0) {
+        int file = open(tokens[2], O_RDWR | O_CREAT | O_TRUNC, 0777);
+        if (file == -1) {
+            printf("FILE OPEN ERROR\n");
+        }
+        dup2(file, fildes2);
+        tokens[1] = NULL;
+        tokens[2] = NULL;
+        int exe = execv(tokens[0], tokens);
+        close(file);
+        printf("This is the exit status %d in file %s\n", exe, tokens[0]);
+        exit(ERROR_FORKING);
+    } else {
+        printf("Child[%d] in background\n", child_PID_tracker[new_child_PID_Index][0]);
+    }
+    new_child_PID_Index++;
+}
+
+/**
+ * @brief 
+ * Exercise 3a: Modified ex1a: {program} (< file) (>/2> file) &
+ * @param num_tokens 
+ * @param tokens 
+ */
+void ex3b_1_modified_ex1a_process_2(size_t num_tokens, char **tokens){
+    if (!file_exists(tokens[2])) {
+        printf("%s does not exist\n", tokens[2]);
+        return;
+    }
+
+    child_PID_tracker[new_child_PID_Index][0] = fork();
+    child_PID_tracker[new_child_PID_Index][1] = INCOMPLETE_FORK;
+    /*
+    printf("Enter the right method\n");
+    printf("Tokens[0] = %s\n", tokens[0]);
+    printf("Tokens[1] = %s\n", tokens[1]);
+    printf("Tokens[2] = %s\n", tokens[2]);
+    */
+
+    if (tokens[3] != NULL) {
+        
+        int fildes2 = strcmp(tokens[3],">") == 0 ? STDOUT_FILENO : STDERR_FILENO;
+        tokens[1] = tokens[2];
+        tokens[2] = NULL;
+        if (child_PID_tracker[new_child_PID_Index][0] == 0) {
+            int file = open(tokens[4], O_RDWR | O_CREAT | O_TRUNC, 0777);
+            int readFile = open(tokens[1], O_RDONLY, 0777);
+            if (file == -1 || readFile == -1) {
+                printf("FILE OPEN ERROR\n");
+            }
+            dup2(file, fildes2);
+            dup2(readFile, STDIN_FILENO);
+            close(file);
+            close(readFile);
+
+            int exe = execv(tokens[0], tokens);
+
+            printf("This is the exit status %d in file %s\n", exe, tokens[0]);
+            exit(ERROR_FORKING);
+        } else {
+            printf("Child[%d] in background\n", child_PID_tracker[new_child_PID_Index][0]);
+        }
+        new_child_PID_Index++;
+    } else {
+        if (child_PID_tracker[new_child_PID_Index][0] == 0) {
+            tokens[1] = tokens[2];
+            tokens[2] = NULL;
+            int readFile = open(tokens[1], O_RDONLY, 0777);
+            if (readFile == -1) {
+                printf("FILE OPEN ERROR\n");
+            }
+            printf("readFile result = %d\n", readFile); 
+            dup2(readFile, STDIN_FILENO);
+            close(readFile);
+
+            printf("Tokens[0] = %s\n", tokens[0]);
+            printf("Tokens[1] = %s\n", tokens[1]);
+            printf("Tokens[2] = %s\n", tokens[2]);
+
+            int exe = execv(tokens[0], &tokens[1]);
+            printf("This is the exit status %d in file %s\n", exe, tokens[0]);
+            exit(ERROR_FORKING);
+        } else {
+            printf("Child[%d] in background\n", child_PID_tracker[new_child_PID_Index][0]); 
+        }
+        new_child_PID_Index++;
+    }
+    
+}
+
+/**
+ * @brief 
  * Exercise 3a: Modified ex1a: {program} (>/2> file)
  * @param num_tokens 
  * @param tokens 
@@ -468,23 +570,44 @@ void ex3a_2_modified_ex1a_process_1(size_t num_tokens, char **tokens){
  * @param tokens
  */
 void ex3a_1_process(size_t num_tokens, char **tokens) {
-    if (strcmp(tokens[1], "<") == 0) {
-        printf("READING FILE: %s\n", tokens[2]);
+    if (strcmp(tokens[num_tokens - 2], "&") !=  0) {
+        if (strcmp(tokens[1], "<") == 0) {
+            printf("READING FILE: %s\n", tokens[2]);
 
-        ex3a_1_modified_ex1a_process_2 (num_tokens, tokens);
+            ex3a_1_modified_ex1a_process_2 (num_tokens, tokens);
 
-        if (tokens[3] != NULL) {
-            if (strcmp(tokens[3], ">") == 0) {
-                printf("WRITING STD FILE: %s\n", tokens[4]);
-            } else if (strcmp(tokens[3], "2>") == 0) {
-                printf("WRITING ERR FILE: %s\n", tokens[4]);
+            if (tokens[3] != NULL) {
+                if (strcmp(tokens[3], ">") == 0) {
+                    printf("WRITING STD FILE: %s\n", tokens[4]);
+                } else if (strcmp(tokens[3], "2>") == 0) {
+                    printf("WRITING ERR FILE: %s\n", tokens[4]);
+                }
             }
-        }
 
-    } else if (strcmp(tokens[1], ">") == 0) {
-        ex3a_1_modified_ex1a_process_1(num_tokens, tokens);
-    } else if (strcmp(tokens[1], "2>") == 0) {
-        ex3a_1_modified_ex1a_process_1(num_tokens, tokens);
+        } else if (strcmp(tokens[1], ">") == 0) {
+            ex3a_1_modified_ex1a_process_1(num_tokens, tokens);
+        } else if (strcmp(tokens[1], "2>") == 0) {
+            ex3a_1_modified_ex1a_process_1(num_tokens, tokens);
+        }
+    } else {
+        if (strcmp(tokens[1], "<") == 0) {
+            printf("READING FILE: %s\n", tokens[2]);
+
+            ex3b_1_modified_ex1a_process_2(num_tokens, tokens);
+
+            if (tokens[3] != NULL) {
+                if (strcmp(tokens[3], ">") == 0) {
+                    printf("WRITING STD FILE: %s\n", tokens[4]);
+                } else if (strcmp(tokens[3], "2>") == 0) {
+                    printf("WRITING ERR FILE: %s\n", tokens[4]);
+                }
+            }
+
+        } else if (strcmp(tokens[1], ">") == 0) {
+            ex3b_1_modified_ex1a_process_1(num_tokens, tokens);
+        } else if (strcmp(tokens[1], "2>") == 0) {
+            ex3b_1_modified_ex1a_process_1(num_tokens, tokens);
+        }
     }
 }
 
@@ -495,11 +618,15 @@ void ex3a_1_process(size_t num_tokens, char **tokens) {
  * @param tokens
  */
 void ex3a_2_process(size_t num_tokens, char **tokens) {
+    if (strcmp(tokens[num_tokens - 2], "&") !=  0) {
         if (strcmp(tokens[2], ">") == 0) {
             ex3a_2_modified_ex1a_process_1(num_tokens, tokens);
         } else if (strcmp(tokens[2], "2>") == 0) {
             ex3a_2_modified_ex1a_process_1(num_tokens, tokens);
         }
+    } else {
+        printf("we are able to reach here too\n");
+    }
 }
 
 /**
