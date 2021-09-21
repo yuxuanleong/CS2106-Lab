@@ -62,14 +62,14 @@ bool file_exists (char *filename) {
  * @return int 
  * 0 -> Unrecognisable command
  * 1 -> info
- * 2 -> {program} (arg...) + {program}
+ * 2 -> {program} (arg...) or {program}
  * 3 -> {program} (arg...) &
  * 4 -> wait {PID}
  * 5 -> terminate {PID}
  * 6 -> {program} &&
  * 7 -> {program} (arg...) &&
- * 8 -> {program} (</>/2> file)
- * 9 -> {program} (arg...) (>/2> file)
+ * 8 -> {program} (< or > or 2> file) (& -> will be detected in ex3_process)
+ * 9 -> {program} (arg...) (> or 2> file) (& -> will be detected in ex3_process)
  */
 int check_command(size_t num_tokens, char** tokens) {
     if (num_tokens == 2) {
@@ -92,7 +92,7 @@ int check_command(size_t num_tokens, char** tokens) {
         }
 
         if (file_exists (tokens[0])) {
-
+            // a for loop to scan for &&
             for (int i = 0; i < num_tokens - 1; i++) {
                 if (strcmp (tokens[i], "&&") == 0) {
                     return 6;
@@ -135,11 +135,11 @@ int check_command(size_t num_tokens, char** tokens) {
 void ex1a_process(size_t num_tokens, char **tokens){
     child_PID_tracker[new_child_PID_Index][0] = fork();
     child_PID_tracker[new_child_PID_Index][1] = INCOMPLETE_FORK;
-    if (child_PID_tracker[new_child_PID_Index][0] == 0) {
+    if (child_PID_tracker[new_child_PID_Index][0] == 0) {   // child
         int exe = execv(tokens[0], tokens);
-        printf("This is the exit status %d in file %s\n", exe, tokens[0]);
+        printf("This is the exit status %d in file %s\n", exe, tokens[0]); // error detection
         exit(ERROR_FORKING);
-    } else {
+    } else {    // parent
         int status;
         waitpid(child_PID_tracker[new_child_PID_Index][0], &status, 0);
         child_PID_tracker[new_child_PID_Index][1] = WEXITSTATUS(status);
@@ -156,12 +156,12 @@ void ex1a_process(size_t num_tokens, char **tokens){
 void ex1b_process(size_t num_tokens, char **tokens){
     child_PID_tracker[new_child_PID_Index][0] = fork();
     child_PID_tracker[new_child_PID_Index][1] = INCOMPLETE_FORK;
-    if (child_PID_tracker[new_child_PID_Index][0] == 0) {
+    if (child_PID_tracker[new_child_PID_Index][0] == 0) { // child
         tokens[num_tokens-2] = NULL;
         int exe = execv(tokens[0], tokens);
-        printf("This is the exit status %d in file %s\n", exe, tokens[0]);
+        printf("This is the exit status %d in file %s\n", exe, tokens[0]);  // error detection
         exit(ERROR_FORKING);
-    } else {
+    } else { // parent, no need to wait for now
         printf("Child[%d] in background\n", child_PID_tracker[new_child_PID_Index][0]);
     }
     new_child_PID_Index++;
@@ -170,13 +170,15 @@ void ex1b_process(size_t num_tokens, char **tokens){
 /**
  * @brief 
  * Exercise 1c: info
- * Exercise 2b: info -> required to output Terminating
+ * Exercise 2b: info -> required to output Terminating (latest)
  * @param num_tokens 
  * @param tokens 
  */
 void ex1c_show_info(size_t num_tokens, char **tokens) {
+    // a for loop to check through all generated PIDs
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (child_PID_tracker[i][0] != 0) {
+            // if flagged with INCOMPLETE_FORK, then wait for that PID child and get its immediate status
             if (child_PID_tracker[i][1] == INCOMPLETE_FORK) {
                 int status;
                 int result = waitpid(child_PID_tracker[i][0], &status, WNOHANG);
@@ -186,6 +188,7 @@ void ex1c_show_info(size_t num_tokens, char **tokens) {
                     child_PID_tracker[i][1] = WEXITSTATUS(status);
                     printf("[%d] Exited %d\n", child_PID_tracker[i][0], child_PID_tracker[i][1]);
                 }
+            // if flagged with TERMINATING_FORK, then wait for that PID child and get its immediate status
             } else if (child_PID_tracker[i][1] == TERMINATING_FORK) {
                 int status;
                 int result = waitpid(child_PID_tracker[i][0], &status, WNOHANG);
@@ -195,6 +198,7 @@ void ex1c_show_info(size_t num_tokens, char **tokens) {
                     child_PID_tracker[i][1] = WEXITSTATUS(status);
                     printf("[%d] Exited %d\n", child_PID_tracker[i][0], child_PID_tracker[i][1]);
                 }
+            // for all completed PIDs
             } else {
                 printf("[%d] Exited %d\n", child_PID_tracker[i][0], child_PID_tracker[i][1]);
             }
@@ -210,6 +214,7 @@ void ex1c_show_info(size_t num_tokens, char **tokens) {
 void my_quit(void) {
     // Clean up function, called after "quit" is entered as a user command
 
+    // a for loop to scan through all PIDs, then terminate 1 by 1 using kill and SIGTERM
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (child_PID_tracker[i][1] == INCOMPLETE_FORK) {
             int killResult = kill(child_PID_tracker[i][0], SIGTERM);
@@ -220,6 +225,7 @@ void my_quit(void) {
                 child_PID_tracker[i][1] = TERMINATING_FORK;
             }
 
+            // wait for kill to complete
             int status;
             int result = waitpid(child_PID_tracker[i][0], &status, 0);
             child_PID_tracker[i][1] = WEXITSTATUS(status);
@@ -238,9 +244,10 @@ void my_quit(void) {
  * @param tokens
  */
 void ex2a_wait_PID(size_t num_tokens, char **tokens) {
-    int targetedPID = atoi(tokens[1]);
+    int targetedPID = atoi(tokens[1]); // convert str to int
+    // a for loop to search for the PID to wait
     for (int i = 0; i < MAX_PROCESSES; i++) {
-        if (child_PID_tracker[i][0] == targetedPID && child_PID_tracker[i][1] == INCOMPLETE_FORK) {
+        if (child_PID_tracker[i][0] == targetedPID && (child_PID_tracker[i][1] == INCOMPLETE_FORK || child_PID_tracker[i][1] == TERMINATING_FORK)) {
             int status;
             int result = waitpid(targetedPID, &status, 0);
             child_PID_tracker[i][1] = WEXITSTATUS(status);
@@ -255,7 +262,8 @@ void ex2a_wait_PID(size_t num_tokens, char **tokens) {
  * @param tokens
  */
 void ex2b_terminate_PID(size_t num_tokens, char **tokens) {
-    int targetedPID = atoi(tokens[1]);
+    int targetedPID = atoi(tokens[1]); // convert str to int
+    // a for loop to search for the PID to kill
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (child_PID_tracker[i][0] == targetedPID && child_PID_tracker[i][1] == INCOMPLETE_FORK) {
             int killResult = kill(targetedPID, SIGTERM);
@@ -275,9 +283,15 @@ void ex2b_terminate_PID(size_t num_tokens, char **tokens) {
  * @param tokens
  */
 void ex2c_process(size_t num_tokens, char **tokens) {
+    // an index indicating the command initial
     int chaining_index = 0;
+
+    // a for loop to loop through the command
     for (int i = 0; i < num_tokens; i++) {
-        int num_chaining_tokens;
+        
+        int num_chaining_tokens;    // a variable to store the length of the command
+
+        // edge case: reaching the end of the command tokens, indicated with NULL
         if (i == num_tokens - 1) {
             num_chaining_tokens = i - chaining_index + 1;
             
@@ -285,10 +299,12 @@ void ex2c_process(size_t num_tokens, char **tokens) {
 
             my_process_command(num_chaining_tokens, &tokens[chaining_index]);
 
+            // unrecognised command
             if (command_type == 0) {
                 return;
             }
 
+            // fail exit
             if (child_PID_tracker[new_child_PID_Index - 1][1] != 0) {
                 printf("%s failed\n", tokens[chaining_index]);
                 return;
@@ -297,22 +313,24 @@ void ex2c_process(size_t num_tokens, char **tokens) {
             chaining_index = i + 1;
         }
         else if (strcmp (tokens[i], "&&") == 0) {
-            tokens[i] = NULL;
+            tokens[i] = NULL; // turns "&&" to NULL -> Stimuate end of command tokens
             num_chaining_tokens = i - chaining_index + 1;
             int command_type = check_command (num_chaining_tokens, &tokens[chaining_index]);
 
             my_process_command(num_chaining_tokens, &tokens[chaining_index]);
 
+            //unrecognised command
             if (command_type == 0) {
                 return;
             }
 
+            // fail exit
             if (child_PID_tracker[new_child_PID_Index - 1][1] != 0) {
                 printf("%s failed\n", tokens[chaining_index]);
                 return;
             }
 
-            chaining_index = i + 1;
+            chaining_index = i + 1; // shift the command initial to the next one
         }
 
     }
@@ -360,6 +378,7 @@ void ex3a_1_modified_ex1a_process_1(size_t num_tokens, char **tokens){
  * @param tokens 
  */
 void ex3a_1_modified_ex1a_process_2(size_t num_tokens, char **tokens){
+    // read file does not exist
     if (!file_exists(tokens[2])) {
         printf("%s does not exist\n", tokens[2]);
         return;
@@ -368,10 +387,10 @@ void ex3a_1_modified_ex1a_process_2(size_t num_tokens, char **tokens){
     child_PID_tracker[new_child_PID_Index][0] = fork();
     child_PID_tracker[new_child_PID_Index][1] = INCOMPLETE_FORK;
 
-    if (tokens[3] != NULL) {
+    if (tokens[3] != NULL) { // for {program} (< file) (> or 2> file)
         
         int fildes2 = strcmp(tokens[3],">") == 0 ? STDOUT_FILENO : STDERR_FILENO;
-        tokens[1] = tokens[2];
+        tokens[1] = tokens[2]; // remove "<"
         tokens[2] = NULL;
         if (child_PID_tracker[new_child_PID_Index][0] == 0) {
             int file = open(tokens[4], O_RDWR | O_CREAT | O_TRUNC, 0777);
@@ -396,7 +415,7 @@ void ex3a_1_modified_ex1a_process_2(size_t num_tokens, char **tokens){
         new_child_PID_Index++;
     } else {
         if (child_PID_tracker[new_child_PID_Index][0] == 0) {
-            tokens[1] = tokens[2];
+            tokens[1] = tokens[2]; // remove "<"
             tokens[2] = NULL;
             int readFile = open(tokens[1], O_RDONLY, 0777);
             if (readFile == -1) {
@@ -421,6 +440,7 @@ void ex3a_1_modified_ex1a_process_2(size_t num_tokens, char **tokens){
 /**
  * @brief 
  * Exercise 3b: Modified ex1a: {program} (>/2> file) &
+ * changes from 3a: parent does not wait
  * @param num_tokens 
  * @param tokens 
  */
@@ -451,6 +471,7 @@ void ex3b_1_modified_ex1a_process_1(size_t num_tokens, char **tokens){
 /**
  * @brief 
  * Exercise 3b: Modified ex1a: {program} (< file) (>/2> file) &
+ * changes from 3a: parent does not wait
  * @param num_tokens 
  * @param tokens 
  */
@@ -544,6 +565,7 @@ void ex3a_2_modified_ex1a_process_1(size_t num_tokens, char **tokens){
 /**
  * @brief 
  * Exercise 3b: Modified ex1a: {program} (>/2> file) &
+ * Changes from 3a: Parent does not wait
  * @param num_tokens 
  * @param tokens 
  */
@@ -574,6 +596,7 @@ void ex3b_2_modified_ex1a_process_1(size_t num_tokens, char **tokens){
 /**
  * @brief
  * Exercise 3a: {program} (</>/2> file) (&)
+ * This is a mini command identifier for the above command input format
  * @param num_tokens
  * @param tokens
  */
@@ -604,6 +627,7 @@ void ex3a_1_process(size_t num_tokens, char **tokens) {
 /** 
  * @brief
  * Exercise 3a: {program} (arg...) (>/2> file) (&)
+ * This is a mini command identifier for the above command input format
  * @param num_tokens
  * @param tokens
  */
