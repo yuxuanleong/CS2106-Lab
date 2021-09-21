@@ -22,6 +22,8 @@
 #include <sys/signal.h>
 #include <fcntl.h>
 
+//============Exercise 1============
+
 /**
  * [0] -> Reserved for PID
  * [1] -> Reserved for Complete Status
@@ -227,6 +229,8 @@ void my_quit(void) {
     printf("Goodbye!\n");
 }
 
+//============Exercise 2============
+
 /**
  * @brief
  * Exercise 2a: wait {PID}
@@ -314,6 +318,9 @@ void ex2c_process(size_t num_tokens, char **tokens) {
     }
 }
 
+//============Exercise 3============
+
+
 /**
  * @brief 
  * Exercise 3a: Modified ex1a: {program} (>/2> file)
@@ -355,8 +362,20 @@ void ex3a_1_modified_ex1a_process_1(size_t num_tokens, char **tokens){
 void ex3a_1_modified_ex1a_process_2(size_t num_tokens, char **tokens){
     child_PID_tracker[new_child_PID_Index][0] = fork();
     child_PID_tracker[new_child_PID_Index][1] = INCOMPLETE_FORK;
+    /*
+    printf("Enter the right method\n");
+    printf("Tokens[0] = %s\n", tokens[0]);
+    printf("Tokens[1] = %s\n", tokens[1]);
+    printf("Tokens[2] = %s\n", tokens[2]);
+    */
+
+    if (!file_exists(tokens[2])) {
+        printf("%s does not exist\n", tokens[2]);
+        return;
+    }
 
     if (tokens[3] != NULL) {
+        
         int fildes2 = strcmp(tokens[3],">") == 0 ? STDOUT_FILENO : STDERR_FILENO;
 
         if (child_PID_tracker[new_child_PID_Index][0] == 0) {
@@ -379,13 +398,21 @@ void ex3a_1_modified_ex1a_process_2(size_t num_tokens, char **tokens){
         new_child_PID_Index++;
     } else {
         if (child_PID_tracker[new_child_PID_Index][0] == 0) {
-            int readFile = open(tokens[2], O_RDWR | O_CREAT | O_TRUNC, 0777);
+            tokens[1] = tokens[2];
+            tokens[2] = NULL;
+            int readFile = open(tokens[1], O_RDONLY, 0777);
             if (readFile == -1) {
                 printf("FILE OPEN ERROR\n");
             }
+            printf("readFile result = %d\n", readFile); 
             dup2(readFile, STDIN_FILENO);
-            int exe = execv(tokens[0], tokens[2]);
             close(readFile);
+
+            printf("Tokens[0] = %s\n", tokens[0]);
+            printf("Tokens[1] = %s\n", tokens[1]);
+            printf("Tokens[2] = %s\n", tokens[2]);
+
+            int exe = execv(tokens[0], &tokens[1]);
             printf("This is the exit status %d in file %s\n", exe, tokens[0]);
             exit(ERROR_FORKING);
         } else {
@@ -442,7 +469,7 @@ void ex3a_1_process(size_t num_tokens, char **tokens) {
 
         ex3a_1_modified_ex1a_process_2 (num_tokens, tokens);
 
-        if (tokens[2] != NULL) {
+        if (tokens[3] != NULL) {
             if (strcmp(tokens[3], ">") == 0) {
                 printf("WRITING STD FILE: %s\n", tokens[4]);
             } else if (strcmp(tokens[3], "2>") == 0) {
