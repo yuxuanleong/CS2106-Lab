@@ -214,8 +214,9 @@ void ex1c_show_info(size_t num_tokens, char **tokens) {
 void my_quit(void) {
     // Clean up function, called after "quit" is entered as a user command
 
-    // a for loop to scan through all PIDs, then terminate 1 by 1 using kill and SIGTERM
+    // a for loop to scan through all PIDs
     for (int i = 0; i < MAX_PROCESSES; i++) {
+        // RUNNING PID
         if (child_PID_tracker[i][1] == INCOMPLETE_FORK) {
             int killResult = kill(child_PID_tracker[i][0], SIGTERM);
 
@@ -226,6 +227,13 @@ void my_quit(void) {
             }
 
             // wait for kill to complete
+            int status;
+            int result = waitpid(child_PID_tracker[i][0], &status, 0);
+            child_PID_tracker[i][1] = WEXITSTATUS(status);
+        }
+
+        // TERMINATING PID
+        if (child_PID_tracker[i][1] == TERMINATING_FORK) {
             int status;
             int result = waitpid(child_PID_tracker[i][0], &status, 0);
             child_PID_tracker[i][1] = WEXITSTATUS(status);
