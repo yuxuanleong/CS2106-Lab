@@ -190,9 +190,27 @@ void ex1c_show_info(size_t num_tokens, char **tokens) {
 /**
  * @brief 
  * Exercise 1d: Quit
+ * Exercise 2d: Quit
  */
 void my_quit(void) {
     // Clean up function, called after "quit" is entered as a user command
+
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (child_PID_tracker[i][1] == INCOMPLETE_FORK) {
+            int killResult = kill(child_PID_tracker[i][0], SIGTERM);
+
+            if (killResult == -1) {
+                exit(ERROR_KILL);
+            } else {
+                child_PID_tracker[i][1] = TERMINATING_FORK;
+            }
+
+            int status;
+            int result = waitpid(child_PID_tracker[i][0], &status, 0);
+            child_PID_tracker[i][1] = WEXITSTATUS(status);
+        }
+    }
+
     printf("Goodbye!\n");
 }
 
