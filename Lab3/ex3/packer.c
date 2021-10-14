@@ -10,8 +10,11 @@
 #define NULL_ID -1
 #define MAX_N 64
 
+// Package Size [Custom]
 int packageN;
+// 1D Array to keep track no of ball for the respective colour
 int packingAreaBallCount[RGB] = {0, 0, 0};
+// 2D Array to track all balls in the same package
 int pairingSystem[RGB][MAX_N];
 
 sem_t mutex[RGB];
@@ -52,6 +55,7 @@ void packer_destroy(void) {
     sem_destroy(&fullPackingArea[B]);
 }
 
+//  To provide the IDs of all other balls in the package
 void packaging(int colour, int id, int* other_ids) {
     for (int i = 0; i < packageN; i++) {
         if (pairingSystem[colour][i] != id) {
@@ -61,45 +65,54 @@ void packaging(int colour, int id, int* other_ids) {
     }
 }
 
+// Modify from the Little Book Of Semaphore
 void pack_ball(int colour, int id, int *other_ids) {
     // Write your code here.
     // Remember to populate the array `other_ids` with the (balls_per_pack-1) other balls.
-    //printf("Colour: %d, ID: %d\n", colour, id);
-    // Write your code here.
-
+    
     colour--;
 
     // wait outside, when packing area is full
     sem_wait(&fullPackingArea[colour]);
 
-    // enter packing area when empty
+    // one by one enter the packing area
     sem_wait(&mutex[colour]);
+        // track ID of the ball that enters the packing area
         pairingSystem[colour][packingAreaBallCount[colour]] = id;
+        // track the number of balls in the packing area
         packingAreaBallCount[colour]++;
+
+        // When balls in packing area reaches the limit 
         if (packingAreaBallCount[colour] == packageN) {
             // packing area is now full
-            sem_wait(&turnstile[colour]);
-            sem_post(&queue[colour]);
+            sem_wait(&turnstile[colour]); // close exit gate
+            sem_post(&queue[colour]); // open gate for allocating area
         }
     sem_post(&mutex[colour]);
 
+    // check if the allocating area's gate is opened
     sem_wait(&queue[colour]);
     sem_post(&queue[colour]);
 
+    // Critical Section: Allocation of otherIDs
     packaging(colour, id, other_ids);
 
+    // Remove ball in packing area one by one
     sem_wait(&mutex[colour]);
         packingAreaBallCount[colour]--;
         if (packingAreaBallCount[colour] == 0) {
             // packing area is now empty
-            for (int i = 0; i < packageN; i ++) {
+
+            // open the gate of packing area
+            for (int i = 0; i < packageN; i++) {
                 sem_post(&fullPackingArea[colour]);
             }
-            sem_wait(&queue[colour]);
-            sem_post(&turnstile[colour]);
+            sem_wait(&queue[colour]); // close the gate allocating area
+            sem_post(&turnstile[colour]); // open the gate of exit area
         }
     sem_post(&mutex[colour]);
 
+    // check if the exit gate is opened
     sem_wait(&turnstile[colour]);
     sem_post(&turnstile[colour]);
 }
