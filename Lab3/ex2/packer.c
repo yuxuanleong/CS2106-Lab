@@ -10,7 +10,9 @@
 #define B 2
 #define NULL_ID -1
 
+// 1D Array to track number of balls for each colour
 int packingAreaBallCount[RGB] = {0, 0, 0};
+// 2D Array to track partner's ID
 int pairingSystem[RGB][2];
 
 sem_t mutex[RGB];
@@ -50,8 +52,9 @@ void packer_destroy(void) {
     sem_destroy(&fullPackingArea[B]);
 }
 
+
+// Algo -> Modified from Reuseable Barrier of "The Little Book of Semaphores - Green Tea Press"
 int pack_ball(int colour, int id) {
-    //printf("Colour: %d, ID: %d\n", colour, id);
     // Write your code here.
 
     colour--;
@@ -59,34 +62,44 @@ int pack_ball(int colour, int id) {
     // wait outside, when packing area is full
     sem_wait(&fullPackingArea[colour]);
 
-    // enter packing area when empty
+    // one by one enter packing area
     sem_wait(&mutex[colour]);
+        
+        // tracking IDs
         pairingSystem[colour][packingAreaBallCount[colour]] = id;
+        // tracking no of balls
         packingAreaBallCount[colour]++;
+
+        // when there are 2 balls
         if (packingAreaBallCount[colour] == 2) {
-            // packing area is now full
-            sem_wait(&turnstile[colour]);
-            sem_post(&queue[colour]);
+            sem_wait(&turnstile[colour]); // close the exit gate
+            sem_post(&queue[colour]); // open allocating area gate
         }
     sem_post(&mutex[colour]);
 
-    sem_wait(&queue[colour]);
+    sem_wait(&queue[colour]); // check if can enter allocating area
     sem_post(&queue[colour]);
 
+    // Critical Section: Allocating Area
     int pair = partner(colour, id);
 
+    // One by one, send the ball off
     sem_wait(&mutex[colour]);
         packingAreaBallCount[colour]--;
+
+        // When 0 ball in packing area
         if (packingAreaBallCount[colour] == 0) {
-            // packing area is now empty
+            
+            // Open the packing area gate to receive new balls
             sem_post(&fullPackingArea[colour]);
             sem_post(&fullPackingArea[colour]);
-            sem_wait(&queue[colour]);
-            sem_post(&turnstile[colour]);
+
+            sem_wait(&queue[colour]); // close allocating area gate
+            sem_post(&turnstile[colour]); // open exit gate
         }
     sem_post(&mutex[colour]);
 
-    sem_wait(&turnstile[colour]);
+    sem_wait(&turnstile[colour]); // check if the exit gate is opened
     sem_post(&turnstile[colour]);
 
     return pair;
