@@ -4,6 +4,8 @@
 // You may add fields to this struct, but do not modify the name of this struct:
 typedef struct {
     // TODO: Add your fields here
+    int state;
+    int queueTicket;
 } group_state;
 
 
