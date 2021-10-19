@@ -115,13 +115,12 @@ int request_for_table(group_state *state, int num_people) {
         } else {
             sem_init(&state->my_turn_to_go, 0, 0);
         }
-
     sem_post(&mutex[num_people]);
 
-    sem_wait(&state->my_turn_to_go);
-    sem_wait(&table_available[num_people]);
+    sem_wait(&state->my_turn_to_go);        //  Group received call
+    sem_wait(&table_available[num_people]); //  Group takes the table
 
-    sem_wait(&customer_serve[num_people]);
+    sem_wait(&customer_serve[num_people]);  //  table service for only 1 group
         //  Assign table to the group
         int table_assigned = assign_table(num_people, state);
     sem_post(&customer_serve[num_people]);
@@ -132,28 +131,26 @@ int request_for_table(group_state *state, int num_people) {
 // Write your code here.
 // TODO
 void leave_table(group_state *state) {
-    //  Wakes up the next in the queue
-    //  destroy the sem_t for those who left the queue
-    //  sem_post the table avaiable
+
     int num_people = state->size_of_group;
     
     //  This semaphore here is to allow customer grp to leave one by one
     sem_wait(&customer_done[num_people]);
-        free_table(state, num_people);
-        state->state_of_group = GROUP_STATE_LEAVE;
-        queue_grp_state[state->queue_ticket] = GROUP_GONE;
-        call_next_group(num_people);
-        sem_post(&table_available[num_people]);
+        free_table(state, num_people);                      //  Mark table used by gorup as empty
+        state->state_of_group = GROUP_STATE_LEAVE;          //  Change group state as left
+        queue_grp_state[state->queue_ticket] = GROUP_GONE;  //  Remarks Queue says that the group has left
+        call_next_group(num_people);                        //  Service called the next group
+        sem_post(&table_available[num_people]);             //  Free up the table for the next group
     sem_post(&customer_done[num_people]);
 }
 
 int assign_table(int num_people, group_state *state) {
     for (int i = 0; i < table_num[num_people]; i++) {
         if (table_state[num_people][i] == TABLE_STATE_UNOCCUPIED) {
-            table_state[num_people][i] = TABLE_STATE_OCCUPIED;
-            state->state_of_group = GROUP_STATE_EAT;
-            state->table_assigned = table_id[num_people][i];
-            group_served++;
+            table_state[num_people][i] = TABLE_STATE_OCCUPIED;      //  Mark table as used
+            state->state_of_group = GROUP_STATE_EAT;                //  Group is now eating
+            state->table_assigned = table_id[num_people][i];        //  Record down the table number
+            group_served++;                                         //  Increment the number of groups being served
             return table_id[num_people][i];
         }
     }
@@ -163,9 +160,11 @@ int assign_table(int num_people, group_state *state) {
 
 void call_next_group(int num_people) {
     for (int i = 0; i < new_group_index; i++) {
+        //  Find a group that is not gone [Waiting]
         if (queue_grp_state[i] == GROUP_NOT_GONE) {
+            //  Check if the table fits and their status
             if (queue[i]->state_of_group == GROUP_STATE_WAIT && queue[i]->size_of_group == num_people) {
-                sem_post(&queue[i]->my_turn_to_go);
+                sem_post(&queue[i]->my_turn_to_go);     //  Call the group to come
                 return;
             }
         }
@@ -174,7 +173,9 @@ void call_next_group(int num_people) {
 
 void free_table(group_state *state, int num_people) {
     for (int i = 0; i < table_num[num_people]; i++) {
+        //  Find the table that was used    
         if (state->table_assigned == table_id[num_people][i]) {
+            //  Clean the table for next group
             table_state[num_people][i] = TABLE_STATE_UNOCCUPIED;         
             return;
         }
