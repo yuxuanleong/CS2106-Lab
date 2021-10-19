@@ -1,26 +1,200 @@
 #include "restaurant.h"
+#include <semaphore.h>
+#include <stdio.h>
+#include <stdlib.h>
 
-// You can declare global variables here
+/******** Common Definition ********/
+#define ERROR_TABLE_ASSIGNMENT -1;
 
+#define MAX_TABLE_TYPE 5
+#define MAX_TABLE_NUM 1000
+#define MAX_CUSTOMER_GROUP_NUM 1000
+
+#define TABLE_TYPE_1P 0
+#define TABLE_TYPE_2P 1
+#define TABLE_TYPE_3P 2
+#define TABLE_TYPE_4P 3
+#define TABLE_TYPE_5P 4
+#define TABLE_STATE_UNOCCUPIED 0
+#define TABLE_STATE_OCCUPIED 1
+
+#define GROUP_TYPE_1P 0
+#define GROUP_TYPE_2P 1
+#define GROUP_TYPE_3P 2
+#define GROUP_TYPE_4P 3
+#define GROUP_TYPE_5P 4
+#define GROUP_STATE_ARRIVE 0
+#define GROUP_STATE_WAIT 1
+#define GROUP_STATE_EAT 2
+#define GROUP_STATE_LEAVE 3
+
+#define GROUP_GONE 0
+#define GROUP_NOT_GONE 1
+
+/******** Prototype ********/
+int assign_table(int num_people, group_state *state);
+void call_next_group(int num_people);
+void free_table(group_state *state, int num_people);
+
+/******** Global Var ********/
+int table_id[MAX_TABLE_TYPE][MAX_TABLE_NUM];
+int table_state[MAX_TABLE_TYPE][MAX_TABLE_NUM];     
+int table_num[MAX_TABLE_TYPE] = {0, 0, 0, 0, 0};    //  To track the number of table in restaurant
+int table_usage[MAX_TABLE_TYPE] = {0, 0, 0, 0, 0};  //  To track the usage of the table
+int total_table = 0;
+
+group_state* queue[MAX_CUSTOMER_GROUP_NUM];
+int queue_grp_state[MAX_CUSTOMER_GROUP_NUM];
+
+int new_group_index = 0;
+int group_served = 0;
+
+/******** Semaphore ********/
+sem_t mutex[MAX_TABLE_TYPE];
+sem_t customer_serve[MAX_TABLE_TYPE];
+sem_t customer_done[MAX_TABLE_TYPE];
+sem_t table_available[MAX_TABLE_TYPE];
+
+/******** Restaurant Operations ********/
+
+//  Main Purpose: Track Restaurant Information
+//  Write initialization code here (called once at the start of the program).
+//  It is guaranteed that num_tables is an array of length 5.
+//  TODO
 void restaurant_init(int num_tables[5]) {
-    // Write initialization code here (called once at the start of the program).
-    // It is guaranteed that num_tables is an array of length 5.
-    // TODO
+    for (int i = 0; i < MAX_TABLE_TYPE; i++) {
+        for (int j = 0; j < num_tables[i]; j++) {
+            table_id[i][j] = total_table;
+            table_state[i][j] = TABLE_STATE_UNOCCUPIED;
+            total_table++;       
+        }
+        table_num[i] = total_table;
+        sem_init(&mutex[i], 0, 1);
+        sem_init(&customer_serve[i], 0, 1);
+        sem_init(&customer_done[i], 0, 1);
+        sem_init(&table_available[i], 0, num_tables[i]);
+    }
 }
 
+// Write deinitialization code here (called once at the end of the program).
+// TODO
 void restaurant_destroy(void) {
-    // Write deinitialization code here (called once at the end of the program).
-    // TODO
+    for (int i = 0; i < MAX_TABLE_TYPE; i++) {
+        sem_destroy(&mutex[i]);
+        sem_destroy(&customer_serve[i]);
+        sem_destroy(&customer_done[i]);
+        sem_destroy(&table_available[i]);
+    }
 }
 
+
+// Write your code here.
+// Return the id of the table you want this group to sit at.
+// TODO
 int request_for_table(group_state *state, int num_people) {
-    // Write your code here.
-    // Return the id of the table you want this group to sit at.
-    // TODO
-    return 0;
+    
+    num_people--;
+    
+    //  Simulate a scene where a group comes into the restaurant,
+    //  1.  Record down the information for the group
+    //  2.  Put the group into queue
+    sem_wait(&mutex[num_people]);
+        on_enqueue();
+        //  Information Record
+        state->state_of_group = GROUP_STATE_WAIT;
+        state->queue_ticket = new_group_index;
+        state->size_of_group = num_people;
+        queue[new_group_index] = state;
+        queue_grp_state[new_group_index] = GROUP_NOT_GONE;
+        new_group_index++;
+
+        int table_left_for_specific_type;
+        int table_type = num_people;
+
+        //  For all the table size >= group size 
+        for (int i = num_people; i < MAX_TABLE_TYPE; i++) {
+            table_type = i;
+            sem_getvalue(&table_available[i], &table_left_for_specific_type);
+
+            //  If there is table left for this table type
+            if (table_left_for_specific_type > 0) {
+                state->size_of_group = i;               //  Change the size of this group to fit the table size
+                sem_init(&state->my_turn_to_go, 0, 1);  //  can them in
+                break;
+            }
+        }
+        
+        //  If all table types >= group_size, there is not a single table left
+        if (table_left_for_specific_type == 0) {
+            sem_init(&state->my_turn_to_go, 0, 0);      //  send them off to mall
+        }
+    //  At this line, num_people is not changed yet
+    sem_post(&mutex[num_people]);
+
+    sem_wait(&state->my_turn_to_go);                    //  Group received call to enter
+    sem_wait(&table_available[state->size_of_group]);   //  Group takes the table according to the size of the table allocated to them.
+
+    sem_wait(&customer_serve[state->size_of_group]);  //  table service for only 1 group
+        //  Assign table to the group
+        int table_assigned = assign_table(state->size_of_group, state); //  Assignment of table according to table type allocated
+    sem_post(&customer_serve[state->size_of_group]);
+
+    return table_assigned;
 }
 
+// Write your code here.
+// TODO
 void leave_table(group_state *state) {
-    // Write your code here.
-    // TODO
+
+    //  Remember that this num_people is can be an imaginary number of people that is forced to fit the table type
+    int num_people = state->size_of_group;
+    
+    //  This semaphore here is to allow customer grp to leave one by one
+    sem_wait(&customer_done[num_people]);
+        free_table(state, num_people);                      //  Mark table used by gorup as empty
+        state->state_of_group = GROUP_STATE_LEAVE;          //  Change group state as left
+        queue_grp_state[state->queue_ticket] = GROUP_GONE;  //  Remarks Queue says that the group has left
+        call_next_group(num_people);                        //  Service called the next group
+        sem_post(&table_available[num_people]);             //  Free up the table for the next group
+    sem_post(&customer_done[num_people]);
+}
+
+int assign_table(int num_people, group_state *state) {
+    for (int i = 0; i < table_num[num_people]; i++) {
+        if (table_state[num_people][i] == TABLE_STATE_UNOCCUPIED) {
+            table_state[num_people][i] = TABLE_STATE_OCCUPIED;      //  Mark table as used
+            state->state_of_group = GROUP_STATE_EAT;                //  Group is now eating
+            state->table_assigned = table_id[num_people][i];        //  Record down the table number
+            group_served++;                                         //  Increment the number of groups being served
+            return table_id[num_people][i];
+        }
+    }
+    //  If this is reached, it means that there is logic fault in sempahores
+    return ERROR_TABLE_ASSIGNMENT;
+}
+
+void call_next_group(int num_people) {
+
+    for (int i = 0; i < new_group_index; i++) {
+        //  Find a group that is not gone [Waiting]
+        if (queue_grp_state[i] == GROUP_NOT_GONE) {
+            //  Check if the table fits and their status
+            if (queue[i]->state_of_group == GROUP_STATE_WAIT && queue[i]->size_of_group <= num_people) {
+                queue[i]->size_of_group = num_people;   //  Change the size_of_group to fit the table type (sync the size of grp to table type)
+                sem_post(&queue[i]->my_turn_to_go);     //  Call the group to come
+                return;
+            }
+        }
+    }
+}
+
+void free_table(group_state *state, int num_people) {
+    for (int i = 0; i < table_num[num_people]; i++) {
+        //  Find the table that was used    
+        if (state->table_assigned == table_id[num_people][i]) {
+            //  Clean the table for next group
+            table_state[num_people][i] = TABLE_STATE_UNOCCUPIED;         
+            return;
+        }
+    }
 }
