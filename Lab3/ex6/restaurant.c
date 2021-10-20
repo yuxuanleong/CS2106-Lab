@@ -135,7 +135,6 @@ int request_for_table(group_state *state, int num_people) {
         //  if at **here**, table_left_for_specific_group is 0, then it means that there are no empty left to allocate
 
         int table_id_to_allocate = LEGIT_PACKED;
-        printf("Are we able to reach here\n");
         //  If there is table_left_for_specfic_type, this looping would not be called
         //  This will only be executed when there is non-empty table left to allocate the group
         if (table_left_for_specific_type == 0) {
