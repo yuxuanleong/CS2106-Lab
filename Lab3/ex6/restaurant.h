@@ -1,9 +1,18 @@
+#include <semaphore.h>
+
 #ifndef RESTAURANT_H
 #define RESTAURANT_H
 
 // You may add fields to this struct, but do not modify the name of this struct:
 typedef struct {
     // TODO: Add your fields here
+    int state_of_group;
+    int queue_ticket;
+    int size_of_group;
+    int size_of_table_to_fit;
+    int legit_want_to_eat;
+    int table_assigned;
+    sem_t my_turn_to_go;
 } group_state;
 
 
