@@ -1,5 +1,3 @@
-#include "userswap.h"
-
 /*
 Assumption
 1. Size of page is 4096 (4kb) -> can ignore the 16 bits of virtual address when designing data struc
@@ -10,6 +8,62 @@ Limitation
 3. when using mmap -> fd argument must always be -1 -> even for userswap_map
 */
 
+#include "userswap.h"
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <stdio.h>   // stdio includes printf
+#include <stdlib.h>  // stdlib includes malloc() and free()
+#include <stddef.h>
+#include <unistd.h>
+#include <sys/queue.h>
+#include <signal.h>
+
+#define TRUE 1
+#define FALSE 0
+#define STANDARD_PAGE_SIZE 4096
+#define handle_error(msg) \
+    do { perror(msg); exit(EXIT_FAILURE); } while (0)
+
+
+//----------------------------Data Structure----------------------------
+/*  
+    Each Node, we store:
+        1) starting address of page
+        2) size of page
+*/  
+struct entry {
+  char* address;
+  size_t size;
+  STAILQ_ENTRY(entry) entries;  
+};
+
+
+//----------------------------Global----------------------------
+STAILQ_HEAD(stailhead, entry);    //  Declare STailQ
+struct stailhead STQ_head;  //  Pointer to the stailq
+int STQ_entry_no = 0;
+size_t standard_page_size = STANDARD_PAGE_SIZE;
+
+
+//----------------------------Prototypes----------------------------
+size_t roundUp(size_t numToRound, size_t multiple);
+
+
+// ----------------------------Internal Functions----------------------------
+
+size_t roundUp(size_t numToRound, size_t multiple) {
+  if (multiple == 0)
+    return numToRound;
+
+  size_t remainder = numToRound % multiple;
+  if (remainder == 0)
+    return numToRound;
+
+  return numToRound + multiple - remainder;
+}
+
+
+// ----------------------------Assignment Functions----------------------------
 
 /*
 1. sets the LORM to size
@@ -21,7 +75,7 @@ void userswap_set_size(size_t size) {
 }
 
 /*
-1. allocate siez bytes of memory that is controlled by the swap scheme
+1. allocate siez bytes of memory that is controlled by the swap scheme (ex0)
 2. return a pointer to the start of the memory
 3. If size not a multiple of the page size, size should be rounded up to the next multiple of page size (quick maths)
 4. This function can be called many times but cannot intervening userswap_free -> possible semaphore?
@@ -29,10 +83,37 @@ void userswap_set_size(size_t size) {
 */
 void *userswap_alloc(size_t size) {
   // 
-  // 1. allocate the requested amount of memory (rounded up as needed) using mmap
-  // 2. Memory should be initially non-resident and allocated as PROT_NONE -> in order for any accesses to the memory to cause a page fault
+  // 1. allocate the requested amount of memory (rounded up as needed) using mmap (todo)
+  // 2. Memory should be initially non-resident and allocated as PROT_NONE -> in order for any accesses to the memory to cause a page fault 
   // 3. Should also install the SIGSEGV handler
-  return NULL;
+
+  //  Checks whether this is the first node -> This will only be performed once
+  if (STQ_entry_no == 0) {
+      STAILQ_INIT(&STQ_head);  
+  }
+  
+  //  Increment the size of the STQ_entry_no
+  STQ_entry_no++;
+
+  //  Round up the size
+  size_t correctSize = roundUp(size, standard_page_size);
+
+  //  mmap
+  char* mmapAddress = mmap(NULL, correctSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (mmapAddress == MAP_FAILED) {
+      handle_error("mmap");
+  }
+
+  //  Data Recording
+  struct entry *newEntry;
+  newEntry = malloc(sizeof(struct entry));
+  newEntry->address = mmapAddress;
+  newEntry->size = correctSize;
+
+  //  Insert into the STQ list
+  STAILQ_INSERT_TAIL(&STQ_head, newEntry, entries);
+
+  return mmapAddress;
 }
 
 /*
@@ -45,6 +126,38 @@ void userswap_free(void *mem) {
   //  1. Free the entire allocation starting at the provided address using munmap
   //  2. Need to track the size of each allocation in userswap_alloc.
   //  3. A simple linked list of allocations, storing the start address (from mmap) and size will be sufficient
+
+  struct entry *tempEntry_1, *tempEntry_2;
+  tempEntry_1 = STAILQ_FIRST(&STQ_head);
+  
+  //  Traverse the list
+  while (tempEntry_1 != NULL) {
+
+    //  Get the first/next element
+    tempEntry_2 = STAILQ_NEXT(tempEntry_1, entries);
+    
+    //  If we found the specified entry
+    if (tempEntry_2->address == mem) {
+  
+      //  Retrieve the data
+      char* addressToFree = tempEntry_2->address;
+      size_t sizeToFree = tempEntry_2->size;
+      
+      //  Delete mapping
+      munmap(addressToFree, sizeToFree);
+      
+      //  Remove entry from the STQ List
+      STAILQ_REMOVE(&STQ_head, tempEntry_2, entry, entries);
+      free(tempEntry_2);
+      
+      //  Stop the looping
+      break;
+    }
+
+    //  Continue to find the specified entry
+    tempEntry_1 = tempEntry_2;
+  }
+
 }
 
 
@@ -67,7 +180,7 @@ void *userswap_map(int fd, size_t size) {
 // 1. Does not need to check whether the faulting memory address is within a controled memory region;
 // 2. It can simply call the page fault handler.
 // 3. The page fault handler will need the address to perform mprotect
-// 4. Faulting memory address can be found in the signinfo t strcut passed to the signal handler
+// 4. Faulting memory address can be found in the signinfo t struct passed to the signal handler
 
 // Write a function to handle page faults (Where the logic bulk for the CMR will reside)
 // 1. Page fault handler only needs to user mprotect to make the page containing the access memory PROT_READ, thereby making the page resident
