@@ -22,11 +22,25 @@
 #define TRUE 1
 #define FALSE 0
 #define STANDARD_PAGE_SIZE 4096
+#define USER_PROT_NONE 0
+#define USER_PROT_READ 1
+#define USER_PROT_READWRITE 2
 #define handle_error(msg) \
     do { perror(msg); exit(EXIT_FAILURE); } while (0)
 
 
 //----------------------------Data Structure----------------------------
+
+typedef struct pageColumnEntry {
+  void* address;
+  size_t size;
+  int currentAccessStatus;
+  STAILQ_ENTRY(pageColumnEntry) pageColumnEntries;  
+} pageColumnEntry;
+
+typedef STAILQ_HEAD(pageColumnHead, pageColumnEntry) pageColumnHead;    //  Declare STailQ
+
+
 /*  
   Each Node, we store:
     1) starting address of page
@@ -35,16 +49,15 @@
 typedef struct entry {
   void* address;
   size_t size;
-  STAILQ_ENTRY(entry) entries;  
+  pageColumnHead head;
+  STAILQ_ENTRY(entry) entries; 
 } entry;
 
-
+typedef STAILQ_HEAD(stailhead, entry) stailhead;    //  Declare STailQ
 //----------------------------Global----------------------------
 
-typedef STAILQ_HEAD(stailhead, entry) stailhead;    //  Declare STailQ
 stailhead global_stailhead;
 int is_sigsegv_handler_assigned = 0;
-
 
 //----------------------------Prototypes----------------------------
 
@@ -52,6 +65,8 @@ size_t roundUp(size_t numToRound, size_t multiple);
 void page_fault_handler(void* address);
 entry *search_entry(void *mem);
 void assign_sigsegv_handler(void);
+pageColumnHead attach_Page_Column(void* startingAddress, size_t total_size);
+void destroy_Page_Column(pageColumnHead head);
 
 //----------------------------Misc Functions----------------------------
 
@@ -65,7 +80,6 @@ size_t roundUp(size_t numToRound, size_t multiple) {
 
   return numToRound + multiple - remainder;
 }
-
 
 //----------------------------Queue Functions----------------------------
 
@@ -82,6 +96,40 @@ entry *search_entry(void *mem) {
 
   return NULL;
 }
+
+pageColumnHead attach_Page_Column(void* startingAddress, size_t total_size) {
+  pageColumnHead localHead;
+  STAILQ_INIT(&localHead);
+
+  printf("total size: %ld\n", total_size);
+  double no_of_pages = total_size / STANDARD_PAGE_SIZE;
+  printf("no_of_pages: %f\n", no_of_pages);
+  void* local_Address = startingAddress;
+
+  while (no_of_pages > 0) {
+    pageColumnEntry *newPageEntry = malloc(sizeof(pageColumnEntry));
+    newPageEntry->address = local_Address;
+    newPageEntry->size = STANDARD_PAGE_SIZE;
+    newPageEntry->currentAccessStatus = USER_PROT_NONE;
+    STAILQ_INSERT_TAIL(&localHead, newPageEntry, pageColumnEntries);
+    local_Address = (void*)((uintptr_t) local_Address + STANDARD_PAGE_SIZE);
+    no_of_pages--;
+  }
+  return localHead;
+}
+
+void destroy_Page_Column(pageColumnHead head) {
+  pageColumnEntry *temp1, *temp2;
+  temp1 = STAILQ_FIRST(&head);
+  // int i = 0;
+  while (temp1 != NULL) {
+    // printf("executed: %d\n", i++);
+    temp2 = STAILQ_NEXT(temp1, pageColumnEntries);
+    free(temp1);
+    temp1 = temp2;
+  }
+}
+
 //----------------------------SIGSEGV Functions----------------------------
 
 void sigsegv_handler(int signo, siginfo_t *info, void *context) {
@@ -160,6 +208,7 @@ void *userswap_alloc(size_t size) {
   entry *newEntry = (entry *) malloc(sizeof(entry));
   newEntry->address = mmapAddress;
   newEntry->size = correctSize;
+  newEntry->head = attach_Page_Column(mmapAddress, size);
 
   //  Insert into the STQ list
   STAILQ_INSERT_HEAD(&global_stailhead, newEntry, entries);
@@ -184,6 +233,8 @@ void userswap_free(void *mem) {
   if (targetEntry == NULL) {
     printf("mem not in list");
   }
+
+  destroy_Page_Column(targetEntry->head);
 
   if (munmap(targetEntry->address, targetEntry->size) == -1) {
     handle_error("userswap_free munmap err");
