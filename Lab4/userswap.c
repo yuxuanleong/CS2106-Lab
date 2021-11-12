@@ -86,6 +86,14 @@ entry *search_entry(void *mem) {
 
 void sigsegv_handler(int signo, siginfo_t *info, void *context) {
   void *address = info->si_addr;
+
+  entry *check_entry = search_entry(address);
+
+  // if the address is not in CMR, reset the signal to SIGSEGV
+  if (check_entry == NULL) {
+    signal(SIGSEGV, SIG_DFL);
+  }
+
   page_fault_handler(address);
 }
 
