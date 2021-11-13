@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <math.h>
+#include <fcntl.h>
 #include <sys/queue.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -85,6 +86,8 @@ int calculate_no_of_pages_to_evict(size_t expected_LORM_SIZE);
 void insert_entry_to_LORM(pageColumnEntry* targetEntry, entry *target_entry);
 void evict_LORM_pages(int no_of_pages, entry *target_entry);
 LORM_entry* record_PageEntry_to_LORMEntry(pageColumnEntry* targetEntry);
+
+void create_SWAP_File(size_t correct_size);
 
 //----------------------------Misc Functions----------------------------
 
@@ -296,6 +299,20 @@ void assign_sigsegv_handler(void) {
   }
 }
 
+//----------------------------SWAP File Functions----------------------------
+
+void create_SWAP_File(size_t correct_size) {
+  int swap_file_name = getpid();
+  char buffer[15];
+  sprintf(buffer, "%d.swap", swap_file_name);
+
+  int swap_fd = open(buffer, O_CREAT|O_WRONLY|O_TRUNC, 0777);
+
+  if (swap_fd == -1) {
+    handle_error("swap_fd creation has error\n");
+  }
+}
+
 // ----------------------------Assignment Functions----------------------------
 
 /*
@@ -304,7 +321,7 @@ void assign_sigsegv_handler(void) {
   3. total size of resident mem in all controlled regions is above the new LORM, do the minimum eviction using FIFO
 */
 void userswap_set_size(size_t size) { 
-  FIX_LORM_SIZE = roundUp(size, STANDARD_PAGE_SIZE);
+  FIX_LORM_SIZE = size;
   STAILQ_INIT(&global_LORM_head);
 }
 
@@ -321,12 +338,13 @@ void *userswap_alloc(size_t size) {
     2. Memory should be initially non-resident and allocated as PROT_NONE -> in order for any accesses to the memory to cause a page fault 
     3. Should also install the SIGSEGV handler
   */
-  userswap_set_size(size);
-
   assign_sigsegv_handler();
 
   //  Round up the size
   size_t correctSize = roundUp(size, STANDARD_PAGE_SIZE);
+
+  userswap_set_size(correctSize);
+  create_SWAP_File(correctSize);
 
   //  mmap
   void* mmapAddress = mmap(NULL, correctSize, PROT_NONE, MAP_ANON | MAP_SHARED, -1, 0);
