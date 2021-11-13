@@ -67,6 +67,7 @@ entry *search_entry(void *mem);
 void assign_sigsegv_handler(void);
 pageColumnHead attach_Page_Column(void* startingAddress, size_t total_size);
 void destroy_Page_Column(pageColumnHead head);
+void mark_Page_Column_Entry(pageColumnEntry* targetEntry, int label);
 
 //----------------------------Misc Functions----------------------------
 
@@ -81,7 +82,7 @@ size_t roundUp(size_t numToRound, size_t multiple) {
   return numToRound + multiple - remainder;
 }
 
-//----------------------------Queue Functions----------------------------
+//----------------------------CMR Functions----------------------------
 
 entry *search_entry(void *mem) {
   entry *entryFound = STAILQ_FIRST(&global_stailhead);
@@ -97,13 +98,15 @@ entry *search_entry(void *mem) {
   return NULL;
 }
 
+//----------------------------Page Column Functions----------------------------
+
 pageColumnHead attach_Page_Column(void* startingAddress, size_t total_size) {
   pageColumnHead localHead;
   STAILQ_INIT(&localHead);
 
-  printf("total size: %ld\n", total_size);
+  // printf("total size: %ld\n", total_size);
   double no_of_pages = total_size / STANDARD_PAGE_SIZE;
-  printf("no_of_pages: %f\n", no_of_pages);
+  // printf("no_of_pages: %f\n", no_of_pages);
   void* local_Address = startingAddress;
 
   while (no_of_pages > 0) {
@@ -130,6 +133,25 @@ void destroy_Page_Column(pageColumnHead head) {
   }
 }
 
+void mark_Page_Column_Entry(pageColumnEntry* targetEntry, int label) {
+  targetEntry->currentAccessStatus = label;
+}
+
+pageColumnEntry *search_Page_Column_Entry(entry* MCR_entry, void *mem) {
+  pageColumnEntry *page_entry_Found;
+  page_entry_Found = STAILQ_FIRST(&(MCR_entry->head));
+
+  while (page_entry_Found != NULL) {
+    if (mem >= page_entry_Found->address && mem < page_entry_Found->address + page_entry_Found->size) {
+      return page_entry_Found;
+    }
+
+    page_entry_Found = STAILQ_NEXT(page_entry_Found, pageColumnEntries);
+  }
+
+  return NULL;
+}
+
 //----------------------------SIGSEGV Functions----------------------------
 
 void sigsegv_handler(int signo, siginfo_t *info, void *context) {
@@ -147,9 +169,31 @@ void sigsegv_handler(int signo, siginfo_t *info, void *context) {
 
 void page_fault_handler(void* address) {
   void *targetedAddr = (void *) ((( (uintptr_t) address + STANDARD_PAGE_SIZE) / STANDARD_PAGE_SIZE - 1) * STANDARD_PAGE_SIZE);
-  if (mprotect(targetedAddr, STANDARD_PAGE_SIZE, PROT_READ) == -1) {
-    handle_error("mprotect failed in page_fault_handler");
+  entry* first_level_search = search_entry(targetedAddr);
+  pageColumnEntry* second_level_search = search_Page_Column_Entry(first_level_search, targetedAddr);
+  int access_status = second_level_search->currentAccessStatus;
+  
+  switch(access_status) {
+    case USER_PROT_NONE:
+      if (mprotect(targetedAddr, STANDARD_PAGE_SIZE, PROT_READ) == -1) {
+        handle_error("mprotect failed in page_fault_handler");
+      } else {
+        second_level_search->currentAccessStatus = USER_PROT_READ;
+      }
+      break;
+    case USER_PROT_READ:
+      if (mprotect(targetedAddr, STANDARD_PAGE_SIZE, PROT_READ | PROT_WRITE) == -1) {
+        handle_error("mprotect failed in page_fault_handler");
+      } else {
+        second_level_search->currentAccessStatus = USER_PROT_READWRITE;
+      }
+      break;
+    default:
+      printf("Current page is all mighty\n");
+
   }
+
+
 }
 
 void assign_sigsegv_handler(void) {
@@ -176,7 +220,9 @@ void assign_sigsegv_handler(void) {
   2. Rounding up too
   3. total size of resident mem in all controlled regions is above the new LORM, do the minimum eviction using FIFO
 */
-void userswap_set_size(size_t size) { }
+void userswap_set_size(size_t size) { 
+  
+}
 
 /*
   1. allocate siez bytes of memory that is controlled by the swap scheme (ex0)
