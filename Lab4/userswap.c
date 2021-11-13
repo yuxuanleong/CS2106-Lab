@@ -15,6 +15,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <signal.h>
+#include <math.h>
 #include <sys/queue.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -38,14 +39,8 @@ typedef struct pageColumnEntry {
   STAILQ_ENTRY(pageColumnEntry) pageColumnEntries;  
 } pageColumnEntry;
 
-typedef STAILQ_HEAD(pageColumnHead, pageColumnEntry) pageColumnHead;    //  Declare STailQ
+typedef STAILQ_HEAD(pageColumnHead, pageColumnEntry) pageColumnHead;
 
-
-/*  
-  Each Node, we store:
-    1) starting address of page
-    2) size of page
-*/  
 typedef struct entry {
   void* address;
   size_t size;
@@ -53,21 +48,43 @@ typedef struct entry {
   STAILQ_ENTRY(entry) entries; 
 } entry;
 
-typedef STAILQ_HEAD(stailhead, entry) stailhead;    //  Declare STailQ
+typedef STAILQ_HEAD(stailhead, entry) stailhead;
+
+typedef struct LORM_entry {
+  void* address;
+  size_t size;
+  STAILQ_ENTRY(LORM_entry) LORM_entries;
+} LORM_entry;
+
+typedef STAILQ_HEAD(LORM_head, LORM_entry) LORM_head;
+
 //----------------------------Global----------------------------
 
 stailhead global_stailhead;
+LORM_head global_LORM_head;
 int is_sigsegv_handler_assigned = 0;
+size_t FIX_LORM_SIZE;
+size_t current_LORM_SIZE = 0;
 
 //----------------------------Prototypes----------------------------
 
 size_t roundUp(size_t numToRound, size_t multiple);
-void page_fault_handler(void* address);
-entry *search_entry(void *mem);
+
+void page_fault_handler(void* address, entry *target_entry);
 void assign_sigsegv_handler(void);
+
+entry *search_entry(void *mem);
+
 pageColumnHead attach_Page_Column(void* startingAddress, size_t total_size);
 void destroy_Page_Column(pageColumnHead head);
 void mark_Page_Column_Entry(pageColumnEntry* targetEntry, int label);
+pageColumnEntry *search_Page_Column_Entry(entry* MCR_entry, void *mem);
+
+void destroy_LORM(void);
+int calculate_no_of_pages_to_evict(size_t expected_LORM_SIZE);
+void insert_entry_to_LORM(pageColumnEntry* targetEntry, entry *target_entry);
+void evict_LORM_pages(int no_of_pages, entry *target_entry);
+LORM_entry* record_PageEntry_to_LORMEntry(pageColumnEntry* targetEntry);
 
 //----------------------------Misc Functions----------------------------
 
@@ -152,6 +169,73 @@ pageColumnEntry *search_Page_Column_Entry(entry* MCR_entry, void *mem) {
   return NULL;
 }
 
+//----------------------------LORM Functions----------------------------
+
+void destroy_LORM(void) {
+  LORM_entry *temp1, *temp2;
+  temp1 = STAILQ_FIRST(&global_LORM_head);
+  // int i = 0;
+  while (temp1 != NULL) {
+    // printf("executed: %d\n", i++);
+    temp2 = STAILQ_NEXT(temp1, LORM_entries);
+    free(temp1);
+    temp1 = temp2;
+  }
+}
+
+void insert_entry_to_LORM(pageColumnEntry* targetEntry, entry *target_entry) {   // to insert at tail
+
+  size_t expected_LORM_SIZE = current_LORM_SIZE + targetEntry->size;
+
+  LORM_entry* new_LORM_entry = record_PageEntry_to_LORMEntry(targetEntry);
+
+  if (expected_LORM_SIZE > FIX_LORM_SIZE) {
+    int no_of_pages_to_evict = calculate_no_of_pages_to_evict(expected_LORM_SIZE);
+    evict_LORM_pages(no_of_pages_to_evict, target_entry);
+    STAILQ_INSERT_TAIL(&global_LORM_head, new_LORM_entry, LORM_entries);
+  } else {
+    STAILQ_INSERT_TAIL(&global_LORM_head, new_LORM_entry, LORM_entries);
+  }
+
+}
+
+int calculate_no_of_pages_to_evict(size_t expected_LORM_SIZE) {
+  size_t offset = expected_LORM_SIZE - FIX_LORM_SIZE;
+
+  int no_of_pages = ceil(offset / STANDARD_PAGE_SIZE) + 1;
+  
+  return no_of_pages;
+}
+
+void evict_LORM_pages(int no_of_pages, entry *target_entry) {
+  
+  LORM_entry* temp;
+
+  while (no_of_pages > 0) {
+    //  Remove from the back
+    temp = STAILQ_FIRST(&global_LORM_head);
+    void* target_address = temp->address;
+
+    if (mprotect(target_address, STANDARD_PAGE_SIZE, PROT_NONE) == -1) {
+      handle_error("mprotect failed in evict_LORM_pages");
+    } else {
+      pageColumnEntry* targetPageEntry = search_Page_Column_Entry(target_entry, target_address);
+      mark_Page_Column_Entry(targetPageEntry, USER_PROT_NONE);
+    }
+
+    STAILQ_REMOVE_HEAD(&global_LORM_head, LORM_entries);
+    free(temp);
+    no_of_pages--;
+  }
+}
+
+LORM_entry* record_PageEntry_to_LORMEntry(pageColumnEntry* targetEntry) {
+  LORM_entry* new_LORM_entry = malloc(sizeof(LORM_entry));
+  new_LORM_entry->address = targetEntry->address;
+  new_LORM_entry->size = targetEntry->size;
+  return new_LORM_entry;
+}
+
 //----------------------------SIGSEGV Functions----------------------------
 
 void sigsegv_handler(int signo, siginfo_t *info, void *context) {
@@ -164,10 +248,10 @@ void sigsegv_handler(int signo, siginfo_t *info, void *context) {
     signal(SIGSEGV, SIG_DFL);
   }
 
-  page_fault_handler(address);
+  page_fault_handler(address, check_entry);
 }
 
-void page_fault_handler(void* address) {
+void page_fault_handler(void* address, entry *target_entry) {
   void *targetedAddr = (void *) ((( (uintptr_t) address + STANDARD_PAGE_SIZE) / STANDARD_PAGE_SIZE - 1) * STANDARD_PAGE_SIZE);
   entry* first_level_search = search_entry(targetedAddr);
   pageColumnEntry* second_level_search = search_Page_Column_Entry(first_level_search, targetedAddr);
@@ -178,6 +262,7 @@ void page_fault_handler(void* address) {
       if (mprotect(targetedAddr, STANDARD_PAGE_SIZE, PROT_READ) == -1) {
         handle_error("mprotect failed in page_fault_handler");
       } else {
+        insert_entry_to_LORM(second_level_search, first_level_search);
         second_level_search->currentAccessStatus = USER_PROT_READ;
       }
       break;
@@ -192,8 +277,6 @@ void page_fault_handler(void* address) {
       printf("Current page is all mighty\n");
 
   }
-
-
 }
 
 void assign_sigsegv_handler(void) {
@@ -221,7 +304,8 @@ void assign_sigsegv_handler(void) {
   3. total size of resident mem in all controlled regions is above the new LORM, do the minimum eviction using FIFO
 */
 void userswap_set_size(size_t size) { 
-  
+  FIX_LORM_SIZE = roundUp(size, STANDARD_PAGE_SIZE);
+  STAILQ_INIT(&global_LORM_head);
 }
 
 /*
@@ -237,6 +321,7 @@ void *userswap_alloc(size_t size) {
     2. Memory should be initially non-resident and allocated as PROT_NONE -> in order for any accesses to the memory to cause a page fault 
     3. Should also install the SIGSEGV handler
   */
+  userswap_set_size(size);
 
   assign_sigsegv_handler();
 
@@ -288,6 +373,8 @@ void userswap_free(void *mem) {
 
   STAILQ_REMOVE(&global_stailhead, targetEntry, entry, entries);
   free(targetEntry);
+
+  destroy_LORM();
 }
 
 
