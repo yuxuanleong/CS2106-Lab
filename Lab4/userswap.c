@@ -32,6 +32,8 @@
 #define USER_PROT_IN_SWAP_FILE 3
 #define SWAP_SLOT_FREE 0
 #define SWAP_SLOT_OCCUPIED 1
+#define ALLOC_MODE 0
+#define MAP_MODE 1
 #define handle_error(msg) \
     do { perror(msg); exit(EXIT_FAILURE); } while (0)
 
@@ -74,6 +76,8 @@ typedef CIRCLEQ_HEAD(SWAP_head, SWAP_entry) SWAP_head;
 
 //----------------------------Global----------------------------
 
+int operation_type;
+
 stailhead global_stailhead;
 LORM_head global_LORM_head;
 SWAP_head global_SWAP_head;
@@ -81,6 +85,10 @@ int is_sigsegv_handler_assigned = 0;
 size_t FIX_LORM_SIZE;
 size_t current_LORM_SIZE = 0;
 int SWAP_FD;
+
+struct stat MAP_buffer;
+int MAP_FILE_status;
+off_t original_MAP_File_size;
 
 //----------------------------Prototypes----------------------------
 
@@ -159,6 +167,28 @@ pageColumnHead attach_Page_Column(void* startingAddress, size_t total_size) {
   }
   return localHead;
 }
+
+pageColumnHead map_Page_Column(void* startingAddress, size_t total_size) {
+  pageColumnHead localHead;
+  STAILQ_INIT(&localHead);
+
+  double no_of_pages = total_size / STANDARD_PAGE_SIZE;
+  void* local_Address = startingAddress;
+  off_t offset = 0;
+
+  while (no_of_pages > 0) {
+    pageColumnEntry *newPageEntry = malloc(sizeof(pageColumnEntry));
+    newPageEntry->address = local_Address;
+    newPageEntry->size = STANDARD_PAGE_SIZE;
+    newPageEntry->currentAccessStatus = USER_PROT_IN_SWAP_FILE;
+    newPageEntry->SWAP_FILE_offset = offset;
+    STAILQ_INSERT_TAIL(&localHead, newPageEntry, pageColumnEntries);
+    local_Address = (void*)((uintptr_t) local_Address + STANDARD_PAGE_SIZE);
+    no_of_pages--;
+    offset++;
+  }
+  return localHead;
+};
 
 void destroy_Page_Column(pageColumnHead head) {
   pageColumnEntry *temp1, *temp2;
@@ -240,6 +270,7 @@ void evict_LORM_pages(int no_of_pages, entry *target_entry, void* starget_addres
 
     pageColumnEntry* targetPageEntry = search_Page_Column_Entry(target_entry, target_address);
     if (targetPageEntry->currentAccessStatus == USER_PROT_READWRITE) { // dirty
+      printf("called\n");
       off_t free_SWAP_Slot = search_for_empty_SWAP_Slot();
       targetPageEntry->SWAP_FILE_offset = free_SWAP_Slot;
       targetPageEntry->currentAccessStatus = USER_PROT_IN_SWAP_FILE;
@@ -311,10 +342,10 @@ void page_fault_handler(void* address, entry *target_entry) {
       }
       break;
     default:
-      printf("Current page is all mighty\n");
-
+      printf("Go listen to 21 pilots and go stare into empty space\n");
   }
 }
+
 
 void assign_sigsegv_handler(void) {
   if (is_sigsegv_handler_assigned) {
@@ -331,27 +362,6 @@ void assign_sigsegv_handler(void) {
   if (sigaction(SIGSEGV, &act, NULL) == -1) {
     handle_error("assign_sigsegv_handler");
   }
-}
-
-void write_into_SWAP_file(void* source_page_address, off_t targeted_SWAP_Slot) {
-  ssize_t checkBytes = pwrite(SWAP_FD, source_page_address, STANDARD_PAGE_SIZE, targeted_SWAP_Slot * STANDARD_PAGE_SIZE);
-  if (checkBytes == -1) {
-    handle_error("pwrite failed in write_into_SWAP_file\n");
-  } else if (checkBytes != STANDARD_PAGE_SIZE) {
-    handle_error("pwrite failed to fully write in write_into_SWAP_file\n");
-  }
-  madvise(source_page_address, STANDARD_PAGE_SIZE, MADV_DONTNEED);
-}
-
-void read_from_SWAP_file(void* target_page_address, off_t source_SWAP_offset) { 
-  madvise(target_page_address, STANDARD_PAGE_SIZE, MADV_NORMAL);
-  ssize_t checkBytes = pread(SWAP_FD, target_page_address, STANDARD_PAGE_SIZE, source_SWAP_offset * STANDARD_PAGE_SIZE);
-  if (checkBytes == -1) {
-    handle_error("pread failed in read_from_SWAP_file\n");
-  } else if (checkBytes != STANDARD_PAGE_SIZE) {
-    handle_error("pread failed to fully read in read_from_SWAP_file\n");
-  }
-
 }
 
 //----------------------------SWAP File Functions----------------------------
@@ -405,6 +415,51 @@ off_t search_for_empty_SWAP_Slot(void) {
   return temp1->SWAP_FILE_offset;
 }
 
+void write_into_SWAP_file(void* source_page_address, off_t targeted_SWAP_Slot) {
+  ssize_t checkBytes = pwrite(SWAP_FD, source_page_address, STANDARD_PAGE_SIZE, targeted_SWAP_Slot * STANDARD_PAGE_SIZE);
+  if (checkBytes == -1) {
+    handle_error("pwrite failed in write_into_SWAP_file\n");
+  } else if (checkBytes != STANDARD_PAGE_SIZE) {
+    handle_error("pwrite failed to fully write in write_into_SWAP_file\n");
+  }
+  madvise(source_page_address, STANDARD_PAGE_SIZE, MADV_DONTNEED);
+}
+
+void read_from_SWAP_file(void* target_page_address, off_t source_SWAP_offset) { 
+  ssize_t checkBytes = pread(SWAP_FD, target_page_address, STANDARD_PAGE_SIZE, source_SWAP_offset * STANDARD_PAGE_SIZE);
+  if (checkBytes == -1) {
+    handle_error("pread failed in read_from_SWAP_file\n");
+  } else if (checkBytes != STANDARD_PAGE_SIZE) {
+    handle_error("pread failed to fully read in read_from_SWAP_file\n");
+  }
+}
+
+
+// ----------------------------MAP File Functions----------------------------
+
+void set_MAP_File(int fd, size_t correct_size) {
+  MAP_FILE_status = fstat(fd, &MAP_buffer);
+  SWAP_FD = fd;
+
+  CIRCLEQ_INIT(&global_SWAP_head);
+
+  int max_swap_slots = correct_size / STANDARD_PAGE_SIZE;
+  int i = 0;
+  while (max_swap_slots > 0) {
+    SWAP_entry* new_swap_slot = malloc(sizeof(SWAP_entry));
+    new_swap_slot->SWAP_FILE_offset = i;
+    // new_swap_slot->status = SWAP_SLOT_FREE;
+    CIRCLEQ_INSERT_TAIL(&global_SWAP_head, new_swap_slot, SWAP_entries);
+    i++;
+    max_swap_slots--;
+  }
+
+  if (ftruncate(SWAP_FD, correct_size) == -1) {
+    handle_error("ftruncate failed in set_MAP_File\n");
+  }
+}
+
+
 // ----------------------------Assignment Functions----------------------------
 
 /*
@@ -436,6 +491,7 @@ void *userswap_alloc(size_t size) {
     2. Memory should be initially non-resident and allocated as PROT_NONE -> in order for any accesses to the memory to cause a page fault 
     3. Should also install the SIGSEGV handler
   */
+  operation_type = ALLOC_MODE;
   assign_sigsegv_handler();
 
   //  Round up the size
@@ -475,6 +531,7 @@ void userswap_free(void *mem) {
     2. Need to track the size of each allocation in userswap_alloc.
     3. A simple linked list of allocations, storing the start address (from mmap) and size will be sufficient
   */
+  
   entry* targetEntry = search_entry(mem);
 
   if (targetEntry == NULL) {
@@ -507,8 +564,32 @@ void userswap_free(void *mem) {
   9. Call internally for SIGSEGV handler if not done so
 */
 void *userswap_map(int fd, size_t size) {
+  
+  operation_type = MAP_MODE;
   assign_sigsegv_handler();
-  return NULL;
+
+  original_MAP_File_size = size;
+  size_t correctSize = roundUp(size, STANDARD_PAGE_SIZE);
+  
+  userswap_set_size(correctSize);
+  set_MAP_File(fd, correctSize);
+
+  //  mmap
+  void* mmapAddress = mmap(NULL, correctSize, PROT_NONE, MAP_ANON | MAP_SHARED, -1, 0);
+
+  if (mmapAddress == NULL) {
+      handle_error("mmap in userswap_alloc");
+  }
+
+  entry *newEntry = (entry *) malloc(sizeof(entry));
+  newEntry->address = mmapAddress;
+  newEntry->size = correctSize;
+  newEntry->head = map_Page_Column(mmapAddress, size);
+
+  // Insert into the STQ list
+  STAILQ_INSERT_HEAD(&global_stailhead, newEntry, entries);
+
+  return mmapAddress;
 }
 
 /* 

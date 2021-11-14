@@ -51,6 +51,6 @@ int main(int argc, char *argv[]) {
       failed = 1;
     }
   }
-
+  free(mem), close(tempfile), userswap_free(file_map);
   return failed;
 }

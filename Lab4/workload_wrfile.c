@@ -69,10 +69,11 @@ int main(int argc, char *argv[]) {
 
   for (size_t i = 0; i < memory_size / sizeof(uintptr_t); ++i) {
     if (mem[i] != i) {
-      printf("Failed read at entry %zu, expected %zx, got %" PRIxPTR "\n", i, i, file_map[i]);
+      printf("Failed read at entry %zu, expected %zx, got %" PRIxPTR "\n", i, i, mem[i]);
       failed = 1;
     }
   }
 
+  free(mem), close(tempfile);
   return failed;
 }
