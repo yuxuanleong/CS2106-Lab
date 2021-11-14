@@ -24,7 +24,8 @@
 #define TRUE 1
 #define FALSE 0
 #define STANDARD_PAGE_SIZE 4096
-#define DEFAULT_LORM_PAGE 2106
+#define MAX_LORM_PAGE 2106
+#define MAX_LORM_SIZE 8626176
 #define USER_PROT_NONE 0
 #define USER_PROT_READ 1
 #define USER_PROT_READWRITE 2
@@ -97,8 +98,8 @@ pageColumnEntry *search_Page_Column_Entry(entry* MCR_entry, void *mem);
 
 void destroy_LORM(void);
 int calculate_no_of_pages_to_evict(size_t expected_LORM_SIZE);
-void insert_entry_to_LORM(pageColumnEntry* targetEntry, entry *target_entry);
-void evict_LORM_pages(int no_of_pages, entry *target_entry);
+void insert_entry_to_LORM(pageColumnEntry* targetEntry, entry *target_entry, void* target_address);
+void evict_LORM_pages(int no_of_pages, entry *target_entry,void* target_address);
 LORM_entry* record_PageEntry_to_LORMEntry(pageColumnEntry* targetEntry);
 
 void create_SWAP_File(size_t correct_size);
@@ -205,21 +206,20 @@ void destroy_LORM(void) {
   }
 }
 
-void insert_entry_to_LORM(pageColumnEntry* targetEntry, entry *target_entry) {   // to insert at tail
+void insert_entry_to_LORM(pageColumnEntry* targetEntry, entry *target_entry, void* target_address) {   // to insert at tail
   
   current_LORM_SIZE += targetEntry->size;
 
   LORM_entry* new_LORM_entry = record_PageEntry_to_LORMEntry(targetEntry);
-  
-  if (current_LORM_SIZE >= FIX_LORM_SIZE) {
-    
+
+  if (current_LORM_SIZE > FIX_LORM_SIZE) {
+    // printf("check current_LORM_SIZE: %ld\nFIX_LORM_SIZE: %ld\n", current_LORM_SIZE, FIX_LORM_SIZE);  
     int no_of_pages_to_evict = calculate_no_of_pages_to_evict(current_LORM_SIZE);
-    evict_LORM_pages(no_of_pages_to_evict, target_entry);
+    evict_LORM_pages(no_of_pages_to_evict, target_entry, target_address);
     STAILQ_INSERT_TAIL(&global_LORM_head, new_LORM_entry, LORM_entries);
   } else {
     STAILQ_INSERT_TAIL(&global_LORM_head, new_LORM_entry, LORM_entries);
   }
-
 }
 
 int calculate_no_of_pages_to_evict(size_t expected_LORM_SIZE) {
@@ -230,33 +230,31 @@ int calculate_no_of_pages_to_evict(size_t expected_LORM_SIZE) {
   return no_of_pages;
 }
 
-void evict_LORM_pages(int no_of_pages, entry *target_entry) {
+void evict_LORM_pages(int no_of_pages, entry *target_entry, void* starget_address) {
 
   LORM_entry* temp;
-
   while (no_of_pages > 0) {
     //  Remove from the back
     temp = STAILQ_FIRST(&global_LORM_head);
     void* target_address = temp->address;
 
+    pageColumnEntry* targetPageEntry = search_Page_Column_Entry(target_entry, target_address);
+    if (targetPageEntry->currentAccessStatus == USER_PROT_READWRITE) { // dirty
+      off_t free_SWAP_Slot = search_for_empty_SWAP_Slot();
+      targetPageEntry->SWAP_FILE_offset = free_SWAP_Slot;
+      targetPageEntry->currentAccessStatus = USER_PROT_IN_SWAP_FILE;
+      write_into_SWAP_file(target_address, free_SWAP_Slot);
+    }
+
     if (mprotect(target_address, STANDARD_PAGE_SIZE, PROT_NONE) == -1) {
       handle_error("mprotect failed in evict_LORM_pages");
     } else {
-      pageColumnEntry* targetPageEntry = search_Page_Column_Entry(target_entry, target_address);
-      
-      if (targetPageEntry->currentAccessStatus == USER_PROT_READWRITE) { // dirty
-        off_t free_SWAP_Slot = search_for_empty_SWAP_Slot();
-        targetPageEntry->SWAP_FILE_offset = free_SWAP_Slot;
-        targetPageEntry->currentAccessStatus = USER_PROT_IN_SWAP_FILE;
-        write_into_SWAP_file(targetPageEntry->address, free_SWAP_Slot);
-      }
-      mark_Page_Column_Entry(targetPageEntry, USER_PROT_NONE);
+      mark_Page_Column_Entry(targetPageEntry, USER_PROT_IN_SWAP_FILE);
+      STAILQ_REMOVE_HEAD(&global_LORM_head, LORM_entries);
+      free(temp);
+      no_of_pages--;
+      current_LORM_SIZE -= STANDARD_PAGE_SIZE;
     }
-
-    STAILQ_REMOVE_HEAD(&global_LORM_head, LORM_entries);
-    free(temp);
-    no_of_pages--;
-    current_LORM_SIZE -= STANDARD_PAGE_SIZE;
   }
 }
 
@@ -292,7 +290,7 @@ void page_fault_handler(void* address, entry *target_entry) {
       if (mprotect(targetedAddr, STANDARD_PAGE_SIZE, PROT_READ) == -1) {
         handle_error("mprotect failed in page_fault_handler");
       } else {
-        insert_entry_to_LORM(second_level_search, first_level_search);
+        insert_entry_to_LORM(second_level_search, first_level_search, targetedAddr);
         second_level_search->currentAccessStatus = USER_PROT_READ;
       }
       break;
@@ -304,11 +302,11 @@ void page_fault_handler(void* address, entry *target_entry) {
       }
       break;
     case USER_PROT_IN_SWAP_FILE:
-      if (mprotect(targetedAddr, STANDARD_PAGE_SIZE, PROT_READ) == -1) {
-        read_from_SWAP_file(targetedAddr, second_level_search->SWAP_FILE_offset);
-        insert_entry_to_LORM(second_level_search, first_level_search);
+      if (mprotect(targetedAddr, STANDARD_PAGE_SIZE, PROT_READ | PROT_WRITE) == -1) {
         handle_error("mprotect failed in page_fault_handler");
       } else {
+        read_from_SWAP_file(targetedAddr, second_level_search->SWAP_FILE_offset);
+        insert_entry_to_LORM(second_level_search, first_level_search, targetedAddr);
         second_level_search->currentAccessStatus = USER_PROT_READ;
       }
       break;
@@ -336,8 +334,7 @@ void assign_sigsegv_handler(void) {
 }
 
 void write_into_SWAP_file(void* source_page_address, off_t targeted_SWAP_Slot) {
-  printf("WE write anything?\n");
-  ssize_t checkBytes = pwrite(SWAP_FD, source_page_address, STANDARD_PAGE_SIZE, targeted_SWAP_Slot);
+  ssize_t checkBytes = pwrite(SWAP_FD, source_page_address, STANDARD_PAGE_SIZE, targeted_SWAP_Slot * STANDARD_PAGE_SIZE);
   if (checkBytes == -1) {
     handle_error("pwrite failed in write_into_SWAP_file\n");
   } else if (checkBytes != STANDARD_PAGE_SIZE) {
@@ -347,12 +344,14 @@ void write_into_SWAP_file(void* source_page_address, off_t targeted_SWAP_Slot) {
 }
 
 void read_from_SWAP_file(void* target_page_address, off_t source_SWAP_offset) { 
-  ssize_t checkBytes = pread(SWAP_FD, target_page_address, STANDARD_PAGE_SIZE, source_SWAP_offset);
+  madvise(target_page_address, STANDARD_PAGE_SIZE, MADV_NORMAL);
+  ssize_t checkBytes = pread(SWAP_FD, target_page_address, STANDARD_PAGE_SIZE, source_SWAP_offset * STANDARD_PAGE_SIZE);
   if (checkBytes == -1) {
     handle_error("pread failed in read_from_SWAP_file\n");
   } else if (checkBytes != STANDARD_PAGE_SIZE) {
     handle_error("pread failed to fully read in read_from_SWAP_file\n");
   }
+
 }
 
 //----------------------------SWAP File Functions----------------------------
@@ -362,7 +361,7 @@ void create_SWAP_File(size_t correct_size) {
   char buffer[15];
   sprintf(buffer, "%d.swap", swap_file_name);
 
-  SWAP_FD = open(buffer, O_CREAT|O_WRONLY|O_TRUNC, 0777);
+  SWAP_FD = open(buffer, O_CREAT|O_RDWR|O_TRUNC, 0777);
 
   if (SWAP_FD == -1) {
     handle_error("swap_fd creation has error\n");
@@ -414,7 +413,13 @@ off_t search_for_empty_SWAP_Slot(void) {
   3. total size of resident mem in all controlled regions is above the new LORM, do the minimum eviction using FIFO
 */
 void userswap_set_size(size_t size) { 
-  FIX_LORM_SIZE = size;
+
+  if (size > MAX_LORM_SIZE) {
+    FIX_LORM_SIZE = MAX_LORM_SIZE;
+  } else {
+    FIX_LORM_SIZE = size;
+  }
+
   STAILQ_INIT(&global_LORM_head);
 }
 
