@@ -239,7 +239,6 @@ void destroy_LORM(void) {
 void insert_entry_to_LORM(pageColumnEntry* targetEntry, entry *target_entry, void* target_address) {   // to insert at tail
   
   current_LORM_SIZE += targetEntry->size;
-
   LORM_entry* new_LORM_entry = record_PageEntry_to_LORMEntry(targetEntry);
 
   if (current_LORM_SIZE > FIX_LORM_SIZE) {
@@ -267,15 +266,18 @@ void evict_LORM_pages(int no_of_pages, entry *target_entry, void* starget_addres
     //  Remove from the back
     temp = STAILQ_FIRST(&global_LORM_head);
     void* target_address = temp->address;
-
     pageColumnEntry* targetPageEntry = search_Page_Column_Entry(target_entry, target_address);
     if (targetPageEntry->currentAccessStatus == USER_PROT_READWRITE) { // dirty
-      printf("called\n");
-      off_t free_SWAP_Slot = search_for_empty_SWAP_Slot();
-      targetPageEntry->SWAP_FILE_offset = free_SWAP_Slot;
-      targetPageEntry->currentAccessStatus = USER_PROT_IN_SWAP_FILE;
-      write_into_SWAP_file(target_address, free_SWAP_Slot);
-    }
+
+      if (operation_type == ALLOC_MODE) {
+          off_t free_SWAP_Slot = search_for_empty_SWAP_Slot();
+          targetPageEntry->SWAP_FILE_offset = free_SWAP_Slot;
+          write_into_SWAP_file(target_address, free_SWAP_Slot);
+        } else {
+          write_into_SWAP_file(target_address, targetPageEntry->SWAP_FILE_offset );
+        }
+        targetPageEntry->currentAccessStatus = USER_PROT_IN_SWAP_FILE;
+      }
 
     if (mprotect(target_address, STANDARD_PAGE_SIZE, PROT_NONE) == -1) {
       handle_error("mprotect failed in evict_LORM_pages");
@@ -286,6 +288,7 @@ void evict_LORM_pages(int no_of_pages, entry *target_entry, void* starget_addres
       no_of_pages--;
       current_LORM_SIZE -= STANDARD_PAGE_SIZE;
     }
+
   }
 }
 
@@ -338,7 +341,11 @@ void page_fault_handler(void* address, entry *target_entry) {
       } else {
         read_from_SWAP_file(targetedAddr, second_level_search->SWAP_FILE_offset);
         insert_entry_to_LORM(second_level_search, first_level_search, targetedAddr);
-        second_level_search->currentAccessStatus = USER_PROT_READ;
+        if (mprotect(targetedAddr, STANDARD_PAGE_SIZE, PROT_READ) == -1 ) {
+          handle_error("mprotect failed in page_fault_handler");
+        } else {
+          second_level_search->currentAccessStatus = USER_PROT_READ;
+        }
       }
       break;
     default:
@@ -538,8 +545,20 @@ void userswap_free(void *mem) {
     printf("mem not in list");
   }
 
-  destroy_Page_Column(targetEntry->head);
+  if (operation_type == MAP_MODE) {
+    pageColumnEntry *temp1, *temp2;
+    temp1 = STAILQ_FIRST(&targetEntry->head);
+    while (temp1 != NULL) {
+      temp2 = STAILQ_NEXT(temp1, pageColumnEntries);
+      if (temp1->currentAccessStatus == USER_PROT_READWRITE) { // dirty
+        write_into_SWAP_file(temp1->address, temp1->SWAP_FILE_offset);
+      }
+      temp1 = temp2;
+    }
+  }
 
+  destroy_Page_Column(targetEntry->head);
+  
   if (munmap(targetEntry->address, targetEntry->size) == -1) {
     handle_error("userswap_free munmap err");
   }
