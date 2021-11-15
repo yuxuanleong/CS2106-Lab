@@ -100,6 +100,7 @@ void assign_sigsegv_handler(void);
 entry *search_entry(void *mem);
 
 pageColumnHead attach_Page_Column(void* startingAddress, size_t total_size);
+pageColumnHead map_Page_Column(void* startingAddress, size_t total_size);
 void destroy_Page_Column(pageColumnHead head);
 void mark_Page_Column_Entry(pageColumnEntry* targetEntry, int label);
 pageColumnEntry *search_Page_Column_Entry(entry* MCR_entry, void *mem);
@@ -113,11 +114,17 @@ LORM_entry* record_PageEntry_to_LORMEntry(pageColumnEntry* targetEntry);
 void create_SWAP_File(size_t correct_size);
 void destroy_SWAP_File_Tracker(void);
 off_t search_for_empty_SWAP_Slot(void);
+void mark_SWAP_slot_empty(off_t target_offset);
 void write_into_SWAP_file(void* source_page_address, off_t targeted_SWAP_Slot);
 void read_from_SWAP_file(void* target_page_address, off_t source_SWAP_offset);
 
+void set_MAP_File(int fd, size_t correct_size);
+
 //----------------------------Misc Functions----------------------------
 
+/*
+  Purpose: To round up the size to the multiple of page size
+*/
 size_t roundUp(size_t numToRound, size_t multiple) {
   if (multiple == 0)
     return numToRound;
@@ -131,6 +138,10 @@ size_t roundUp(size_t numToRound, size_t multiple) {
 
 //----------------------------CMR Functions----------------------------
 
+/*
+  Purpose: To evaluate and return the CMR entry with the valid address
+  Condidtion: Address must be within the CMR region allocated
+*/
 entry *search_entry(void *mem) {
   entry *entryFound = STAILQ_FIRST(&global_stailhead);
 
@@ -147,27 +158,31 @@ entry *search_entry(void *mem) {
 
 //----------------------------Page Column Functions----------------------------
 
+/*
+  Purpose: To initialize a list of pages to the CMR entry's record
+*/
 pageColumnHead attach_Page_Column(void* startingAddress, size_t total_size) {
   pageColumnHead localHead;
   STAILQ_INIT(&localHead);
 
-  // printf("total size: %ld\n", total_size);
   double no_of_pages = total_size / STANDARD_PAGE_SIZE;
-  // printf("no_of_pages: %f\n", no_of_pages);
   void* local_Address = startingAddress;
 
   while (no_of_pages > 0) {
     pageColumnEntry *newPageEntry = malloc(sizeof(pageColumnEntry));
-    newPageEntry->address = local_Address;
-    newPageEntry->size = STANDARD_PAGE_SIZE;
-    newPageEntry->currentAccessStatus = USER_PROT_NONE;
+    newPageEntry->address = local_Address;                //  label with the right addr
+    newPageEntry->size = STANDARD_PAGE_SIZE;              //  label with standard page size
+    newPageEntry->currentAccessStatus = USER_PROT_NONE;   //  label with NON-Resident status
     STAILQ_INSERT_TAIL(&localHead, newPageEntry, pageColumnEntries);
-    local_Address = (void*)((uintptr_t) local_Address + STANDARD_PAGE_SIZE);
+    local_Address = (void*)((uintptr_t) local_Address + STANDARD_PAGE_SIZE);  //  increment to the next valid page address
     no_of_pages--;
   }
   return localHead;
 }
 
+/*
+  Purpose: To initialize a list of pages to CMR entry's record 
+*/
 pageColumnHead map_Page_Column(void* startingAddress, size_t total_size) {
   pageColumnHead localHead;
   STAILQ_INIT(&localHead);
@@ -178,34 +193,42 @@ pageColumnHead map_Page_Column(void* startingAddress, size_t total_size) {
 
   while (no_of_pages > 0) {
     pageColumnEntry *newPageEntry = malloc(sizeof(pageColumnEntry));
-    newPageEntry->address = local_Address;
-    newPageEntry->size = STANDARD_PAGE_SIZE;
-    newPageEntry->currentAccessStatus = USER_PROT_IN_SWAP_FILE;
-    newPageEntry->SWAP_FILE_offset = offset;
+    newPageEntry->address = local_Address;                          //  label with the right addr
+    newPageEntry->size = STANDARD_PAGE_SIZE;                        //  label with standard page size
+    newPageEntry->currentAccessStatus = USER_PROT_IN_SWAP_FILE;     //  label with Secondary File Resident Status
+    newPageEntry->SWAP_FILE_offset = offset;                        //  label with the allocation slot in the Secondary File Resident Status
     STAILQ_INSERT_TAIL(&localHead, newPageEntry, pageColumnEntries);
     local_Address = (void*)((uintptr_t) local_Address + STANDARD_PAGE_SIZE);
     no_of_pages--;
-    offset++;
+    offset++;   //  Increment to record the next allocation slot in the Secondary File Resident Status
   }
   return localHead;
 };
 
+/*
+  Purpose: Destroy the page column data structure
+*/
 void destroy_Page_Column(pageColumnHead head) {
   pageColumnEntry *temp1, *temp2;
   temp1 = STAILQ_FIRST(&head);
-  // int i = 0;
   while (temp1 != NULL) {
-    // printf("executed: %d\n", i++);
     temp2 = STAILQ_NEXT(temp1, pageColumnEntries);
     free(temp1);
     temp1 = temp2;
   }
 }
 
+/*
+  Purpose: To mark the page entry's residency status 
+*/
 void mark_Page_Column_Entry(pageColumnEntry* targetEntry, int label) {
   targetEntry->currentAccessStatus = label;
 }
 
+/*
+  Purpose: To evaluate and return the page entry with the valid address
+  Condidtion: Address must be within the CMR region allocated
+*/
 pageColumnEntry *search_Page_Column_Entry(entry* MCR_entry, void *mem) {
   pageColumnEntry *page_entry_Found;
   page_entry_Found = STAILQ_FIRST(&(MCR_entry->head));
@@ -224,6 +247,9 @@ pageColumnEntry *search_Page_Column_Entry(entry* MCR_entry, void *mem) {
 
 //----------------------------LORM Functions----------------------------
 
+/*
+  Purpose: To destroy the LORM Tracker data structure
+*/
 void destroy_LORM(void) {
   LORM_entry *temp1, *temp2;
   temp1 = STAILQ_FIRST(&global_LORM_head);
@@ -236,13 +262,15 @@ void destroy_LORM(void) {
   }
 }
 
+/*
+  Purpose: To move a page from non-resident to resident
+*/
 void insert_entry_to_LORM(pageColumnEntry* targetEntry, entry *target_entry, void* target_address) {   // to insert at tail
   
   current_LORM_SIZE += targetEntry->size;
   LORM_entry* new_LORM_entry = record_PageEntry_to_LORMEntry(targetEntry);
 
-  if (current_LORM_SIZE > FIX_LORM_SIZE) {
-    // printf("check current_LORM_SIZE: %ld\nFIX_LORM_SIZE: %ld\n", current_LORM_SIZE, FIX_LORM_SIZE);  
+  if (current_LORM_SIZE > FIX_LORM_SIZE) {  //  If exceeded the capacity
     int no_of_pages_to_evict = calculate_no_of_pages_to_evict(current_LORM_SIZE);
     evict_LORM_pages(no_of_pages_to_evict, target_entry, target_address);
     STAILQ_INSERT_TAIL(&global_LORM_head, new_LORM_entry, LORM_entries);
@@ -251,6 +279,9 @@ void insert_entry_to_LORM(pageColumnEntry* targetEntry, entry *target_entry, voi
   }
 }
 
+/*
+  Purpose: To calculate the min. no of pages to evict
+*/
 int calculate_no_of_pages_to_evict(size_t expected_LORM_SIZE) {
   size_t offset = expected_LORM_SIZE - FIX_LORM_SIZE;
 
@@ -259,39 +290,45 @@ int calculate_no_of_pages_to_evict(size_t expected_LORM_SIZE) {
   return no_of_pages;
 }
 
+/*
+  Purpose: Evict a number of pages from the LORM
+*/
 void evict_LORM_pages(int no_of_pages, entry *target_entry, void* starget_address) {
 
   LORM_entry* temp;
   while (no_of_pages > 0) {
-    //  Remove from the back
-    temp = STAILQ_FIRST(&global_LORM_head);
+    temp = STAILQ_FIRST(&global_LORM_head); //  remove from the head
     void* target_address = temp->address;
     pageColumnEntry* targetPageEntry = search_Page_Column_Entry(target_entry, target_address);
-    if (targetPageEntry->currentAccessStatus == USER_PROT_READWRITE) { // dirty
+    if (targetPageEntry->currentAccessStatus == USER_PROT_READWRITE) { // if the page is written, it is dirty
 
-      if (operation_type == ALLOC_MODE) {
-          off_t free_SWAP_Slot = search_for_empty_SWAP_Slot();
-          targetPageEntry->SWAP_FILE_offset = free_SWAP_Slot;
-          write_into_SWAP_file(target_address, free_SWAP_Slot);
-        } else {
-          write_into_SWAP_file(target_address, targetPageEntry->SWAP_FILE_offset );
-        }
-        targetPageEntry->currentAccessStatus = USER_PROT_IN_SWAP_FILE;
+      if (operation_type == ALLOC_MODE) { //  ALLOC
+        off_t free_SWAP_Slot = search_for_empty_SWAP_Slot();  //  search from an empty slot that is available in the swap file
+        targetPageEntry->SWAP_FILE_offset = free_SWAP_Slot;   //  label the allocated slot in the swap file
+        write_into_SWAP_file(target_address, free_SWAP_Slot); //  write
+      } else {  
+        write_into_SWAP_file(target_address, targetPageEntry->SWAP_FILE_offset ); //  just write based on the recorded allocation slot in the page record
       }
 
-    if (mprotect(target_address, STANDARD_PAGE_SIZE, PROT_NONE) == -1) {
+      targetPageEntry->currentAccessStatus = USER_PROT_IN_SWAP_FILE;  //  label the new status of the page as non resident
+    }
+
+    if (mprotect(target_address, STANDARD_PAGE_SIZE, PROT_NONE) == -1) {  //  syscall to remove from residency
       handle_error("mprotect failed in evict_LORM_pages");
     } else {
-      mark_Page_Column_Entry(targetPageEntry, USER_PROT_IN_SWAP_FILE);
-      STAILQ_REMOVE_HEAD(&global_LORM_head, LORM_entries);
+      mark_Page_Column_Entry(targetPageEntry, USER_PROT_IN_SWAP_FILE);  //  label again
+      STAILQ_REMOVE_HEAD(&global_LORM_head, LORM_entries);  //  Safety remove from head
       free(temp);
       no_of_pages--;
-      current_LORM_SIZE -= STANDARD_PAGE_SIZE;
+      current_LORM_SIZE -= STANDARD_PAGE_SIZE;  //  Decrement the LORM size by 1 page size
     }
 
   }
 }
 
+/*
+  Purpose: To copy the data of a page from non residency DS to it's residency DS
+*/
 LORM_entry* record_PageEntry_to_LORMEntry(pageColumnEntry* targetEntry) {
   LORM_entry* new_LORM_entry = malloc(sizeof(LORM_entry));
   new_LORM_entry->address = targetEntry->address;
@@ -301,6 +338,9 @@ LORM_entry* record_PageEntry_to_LORMEntry(pageColumnEntry* targetEntry) {
 
 //----------------------------SIGSEGV Functions----------------------------
 
+/*
+  Requirement
+*/
 void sigsegv_handler(int signo, siginfo_t *info, void *context) {
   void *address = info->si_addr;
 
@@ -314,13 +354,16 @@ void sigsegv_handler(int signo, siginfo_t *info, void *context) {
   page_fault_handler(address, check_entry);
 }
 
+/*
+  Purpose: To handle SIGSEGV
+*/
 void page_fault_handler(void* address, entry *target_entry) {
-  void *targetedAddr = (void *) ((( (uintptr_t) address + STANDARD_PAGE_SIZE) / STANDARD_PAGE_SIZE - 1) * STANDARD_PAGE_SIZE);
-  entry* first_level_search = search_entry(targetedAddr);
-  pageColumnEntry* second_level_search = search_Page_Column_Entry(first_level_search, targetedAddr);
-  int access_status = second_level_search->currentAccessStatus;
+  void *targetedAddr = (void *) ((( (uintptr_t) address + STANDARD_PAGE_SIZE) / STANDARD_PAGE_SIZE - 1) * STANDARD_PAGE_SIZE);  //  adjust to correct address
+  entry* first_level_search = search_entry(targetedAddr);   
+  pageColumnEntry* second_level_search = search_Page_Column_Entry(first_level_search, targetedAddr);  //  locate the page from non residency
+  int access_status = second_level_search->currentAccessStatus; //  check the page current access status
   switch(access_status) {
-    case USER_PROT_NONE:
+    case USER_PROT_NONE:  //  move to residency
       if (mprotect(targetedAddr, STANDARD_PAGE_SIZE, PROT_READ) == -1) {
         handle_error("mprotect failed in page_fault_handler");
       } else {
@@ -328,22 +371,25 @@ void page_fault_handler(void* address, entry *target_entry) {
         second_level_search->currentAccessStatus = USER_PROT_READ;
       }
       break;
-    case USER_PROT_READ:
+    case USER_PROT_READ:  //  change access status to include write
       if (mprotect(targetedAddr, STANDARD_PAGE_SIZE, PROT_READ | PROT_WRITE) == -1) {
         handle_error("mprotect failed in page_fault_handler");
       } else {
         second_level_search->currentAccessStatus = USER_PROT_READWRITE;
       }
       break;
-    case USER_PROT_IN_SWAP_FILE:
-      if (mprotect(targetedAddr, STANDARD_PAGE_SIZE, PROT_READ | PROT_WRITE) == -1) {
+    case USER_PROT_IN_SWAP_FILE:  //  move from Secondary Storage to residency
+      if (mprotect(targetedAddr, STANDARD_PAGE_SIZE, PROT_READ | PROT_WRITE) == -1) { //  set to RW access ability to information retrival
         handle_error("mprotect failed in page_fault_handler");
       } else {
-        read_from_SWAP_file(targetedAddr, second_level_search->SWAP_FILE_offset);
-        insert_entry_to_LORM(second_level_search, first_level_search, targetedAddr);
-        if (mprotect(targetedAddr, STANDARD_PAGE_SIZE, PROT_READ) == -1 ) {
+        read_from_SWAP_file(targetedAddr, second_level_search->SWAP_FILE_offset); //  retrieve information
+        insert_entry_to_LORM(second_level_search, first_level_search, targetedAddr);  //  move to residency
+        if (mprotect(targetedAddr, STANDARD_PAGE_SIZE, PROT_READ) == -1 ) { //  set the access ability back only read
           handle_error("mprotect failed in page_fault_handler");
         } else {
+          if (operation_type == ALLOC_MODE) {
+            mark_SWAP_slot_empty(second_level_search->SWAP_FILE_offset);
+          }
           second_level_search->currentAccessStatus = USER_PROT_READ;
         }
       }
@@ -353,7 +399,9 @@ void page_fault_handler(void* address, entry *target_entry) {
   }
 }
 
-
+/*
+  Requirement
+*/
 void assign_sigsegv_handler(void) {
   if (is_sigsegv_handler_assigned) {
     return;
@@ -373,6 +421,9 @@ void assign_sigsegv_handler(void) {
 
 //----------------------------SWAP File Functions----------------------------
 
+/*
+  Purpose: Create Swap file
+*/
 void create_SWAP_File(size_t correct_size) {
   int swap_file_name = getpid();
   char buffer[15];
@@ -384,20 +435,23 @@ void create_SWAP_File(size_t correct_size) {
     handle_error("swap_fd creation has error\n");
   }
 
-  CIRCLEQ_INIT(&global_SWAP_head);
+  CIRCLEQ_INIT(&global_SWAP_head);  //  Using a circular linked list to track available slots
 
-  int max_swap_slots = correct_size / STANDARD_PAGE_SIZE;
+  int max_swap_slots = correct_size / STANDARD_PAGE_SIZE; //  Calculate the max no of pages
   int i = 0;
   while (max_swap_slots > 0) {
     SWAP_entry* new_swap_slot = malloc(sizeof(SWAP_entry));
-    new_swap_slot->SWAP_FILE_offset = i;
-    new_swap_slot->status = SWAP_SLOT_FREE;
+    new_swap_slot->SWAP_FILE_offset = i;  //  record the offset location allocated for this page in SWAP file
+    new_swap_slot->status = SWAP_SLOT_FREE; //  record this slot as free
     CIRCLEQ_INSERT_TAIL(&global_SWAP_head, new_swap_slot, SWAP_entries);
     i++;
     max_swap_slots--;
   }
 }
 
+/* 
+  Purpose: To destroy the SWAP File Track DS
+*/
 void destroy_SWAP_File_Tracker(void) {
   SWAP_entry *temp1, *temp2;
   temp1 = CIRCLEQ_FIRST(&global_SWAP_head);
@@ -408,12 +462,15 @@ void destroy_SWAP_File_Tracker(void) {
   }
 }
 
+/*
+  Purpose: Locate an empty slot in SWAP file
+*/
 off_t search_for_empty_SWAP_Slot(void) {
   SWAP_entry *temp1, *temp2;
   temp1 = CIRCLEQ_FIRST(&global_SWAP_head);
   while (temp1 != (void *)&global_SWAP_head) {
     if (temp1->status == SWAP_SLOT_FREE) {
-      temp1->status = SWAP_SLOT_OCCUPIED;
+      temp1->status = SWAP_SLOT_OCCUPIED; //  mark the slot as occupied
       break;
     }
     temp2 = CIRCLEQ_NEXT(temp1, SWAP_entries);
@@ -422,6 +479,25 @@ off_t search_for_empty_SWAP_Slot(void) {
   return temp1->SWAP_FILE_offset;
 }
 
+/*
+  Purpose: To mark a SWAP slot as empty
+*/
+void mark_SWAP_slot_empty(off_t target_offset) {
+  SWAP_entry *temp1, *temp2;
+  temp1 = CIRCLEQ_FIRST(&global_SWAP_head);
+  while (temp1 != (void *)&global_SWAP_head) {
+    if (temp1->SWAP_FILE_offset == target_offset) {
+      temp1->status = SWAP_SLOT_FREE;
+      break;
+    }
+    temp2 = CIRCLEQ_NEXT(temp1, SWAP_entries);
+    temp1 = temp2;
+  }
+}
+
+/*
+  Purpose: Write evicted page content into SWAP slot
+*/
 void write_into_SWAP_file(void* source_page_address, off_t targeted_SWAP_Slot) {
   ssize_t checkBytes = pwrite(SWAP_FD, source_page_address, STANDARD_PAGE_SIZE, targeted_SWAP_Slot * STANDARD_PAGE_SIZE);
   if (checkBytes == -1) {
@@ -432,6 +508,9 @@ void write_into_SWAP_file(void* source_page_address, off_t targeted_SWAP_Slot) {
   madvise(source_page_address, STANDARD_PAGE_SIZE, MADV_DONTNEED);
 }
 
+/*
+  Purpose: Retrieve information from a SWAP slot into a page
+*/
 void read_from_SWAP_file(void* target_page_address, off_t source_SWAP_offset) { 
   ssize_t checkBytes = pread(SWAP_FD, target_page_address, STANDARD_PAGE_SIZE, source_SWAP_offset * STANDARD_PAGE_SIZE);
   if (checkBytes == -1) {
@@ -444,6 +523,9 @@ void read_from_SWAP_file(void* target_page_address, off_t source_SWAP_offset) {
 
 // ----------------------------MAP File Functions----------------------------
 
+/*
+  Purpose: Set up MAP File tracker DS
+*/
 void set_MAP_File(int fd, size_t correct_size) {
   MAP_FILE_status = fstat(fd, &MAP_buffer);
   SWAP_FD = fd;
@@ -455,7 +537,6 @@ void set_MAP_File(int fd, size_t correct_size) {
   while (max_swap_slots > 0) {
     SWAP_entry* new_swap_slot = malloc(sizeof(SWAP_entry));
     new_swap_slot->SWAP_FILE_offset = i;
-    // new_swap_slot->status = SWAP_SLOT_FREE;
     CIRCLEQ_INSERT_TAIL(&global_SWAP_head, new_swap_slot, SWAP_entries);
     i++;
     max_swap_slots--;
